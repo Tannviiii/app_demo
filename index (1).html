@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>VAAHAK — Intelligent Dead Reckoning + Map Matching</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+ integrity="sha256-p4NxAoJBhIINfQ3I4gZq7z2fQ8gF4w3l2gq3gYx0b8="
+ crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+ integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+ crossorigin=""></script>
+<style>
+  :root{
+    --bg:#070B16; --panel:#0F1626; --card:#151E33; 
+    --line:#243250; --ink:#EDF2FB; --muted:#8494B0;
+    --teal:#19C2CE; --red:#FF5C5C; --green:#2FD07E; --amber:#FFC24B; --navy:#2C4A80;
+    box-sizing:border-box;
+    padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+  }
+  *,*::before,*::after{box-sizing:inherit}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--ink);
+    font-family:"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+    display:flex;align-items:center;justify-content:center;padding:12px}
+  .app{width:100%;max-width:440px;height:min(92vh,900px);background:var(--panel);
+    border-radius:24px;overflow:hidden;display:flex;flex-direction:column;
+    border:1px solid var(--line);box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  header{padding:11px 16px;display:flex;align-items:center;gap:10px;
+    border-bottom:1px solid var(--line);background:#0B1220}
+  .brand{font-weight:800;letter-spacing:.14em;font-size:13px}
+  .brand span{color:var(--teal)}
+  .tabs{margin-left:auto;display:flex;gap:4px;background:#0A101E;border-radius:9px;padding:3px}
+  .tab{padding:6px 11px;border-radius:7px;font-size:11.5px;font-weight:600;
+    color:var(--muted);cursor:pointer;border:none;background:none;font-family:inherit}
+  .tab.on{background:var(--teal);color:#04262A}
+  .status{display:flex;align-items:center;gap:9px;padding:11px 16px;font-size:13px;
+    font-weight:700;background:var(--green);color:#052A14;transition:background .35s,color .35s}
+  .status.lost{background:var(--red);color:#2B0606}
+  .status.idle{background:#2A3550;color:var(--muted)}
+  .dot{width:9px;height:9px;border-radius:50%;background:currentColor;animation:p 1.3s infinite}
+  @keyframes p{0%,100%{opacity:1}50%{opacity:.25}}
+  .age{margin-left:auto;font-variant-numeric:tabular-nums}
+  .map{position:relative;flex:1;background:#0A1120;overflow:hidden;min-height:180px}
+  #leafletMap{position:absolute;inset:0}
+  .leaflet-container{background:#0A1120;font:11px "Segoe UI",system-ui,sans-serif}
+  .leaflet-control-attribution{font-size:8px}
+  .mm-pill{position:absolute;right:10px;top:10px;z-index:1000;background:rgba(7,11,22,.90);
+    border:1px solid var(--line);border-radius:9px;padding:7px 9px;font-size:10px;line-height:1.35}
+  .mm-pill b{color:var(--amber)}
+  .mm-dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:-1px}
+  .hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    text-align:center;padding:26px;color:var(--muted);font-size:13px;line-height:1.65}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line)}
+  .cell{padding:11px 8px;text-align:center;border-right:1px solid var(--line)}
+  .cell:last-child{border-right:none}
+  .k{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+  .v{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.05}
+  .u{font-size:9.5px;color:var(--muted);margin-top:2px}
+  .diag{padding:9px 14px;border-top:1px solid var(--line);background:#0B1220;
+    font-size:10.5px;color:var(--muted);line-height:1.75;max-height:104px;overflow-y:auto}
+  .diag b{color:var(--ink);font-weight:600}
+  .ctl{display:flex;gap:8px;padding:11px 12px;border-top:1px solid var(--line);background:#0B1220}
+  button.act{flex:1;padding:12px;border-radius:11px;border:1px solid var(--line);
+    background:#1A2540;color:var(--ink);font-size:13px;font-weight:700;font-family:inherit;cursor:pointer}
+  button.act.primary{background:var(--teal);border-color:var(--teal);color:#04262A}
+  button.act.danger{background:var(--red);border-color:var(--red);color:#fff}
+  button.act:disabled{opacity:.35}
+  .legend{position:absolute;left:11px;bottom:11px;font-size:10.5px;background:rgba(7,11,22,.86);
+    padding:7px 9px;border-radius:8px;border:1px solid var(--line);line-height:1.75}
+  .sw{display:inline-block;width:15px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">VAA<span>HAK</span></div>
+    <div class="tabs">
+      <button class="tab on" id="tabLive">Live</button>
+      <button class="tab" id="tabReplay">Replay</button>
+    </div>
+  </header>
+
+  <div class="status idle" id="status">
+    <span class="dot"></span><span id="stText">Not started</span>
+    <span class="age" id="age"></span>
+  </div>
+
+  <div class="map">
+    <div id="leafletMap"></div>
+    <div class="hint" id="hint">Tap <b>Start</b>, allow motion and location,<br>then drive or walk.<br><br>
+      GNSS builds a local road cache. When GNSS is cut,<br>
+      the inertial estimate is constrained to the cached road geometry.</div>
+    <div class="legend" style="display:none" id="legend">
+      <div><span class="sw" style="background:#19C2CE"></span>GNSS</div>
+      <div><span class="sw" style="background:#FF5C5C"></span>Dead reckoning</div>
+      <div><span class="sw" style="background:#FFC24B"></span>Map matched</div>
+      <div><span class="sw" style="background:#FFFFFF"></span>Road network</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="cell"><div class="k">Speed</div><div class="v" id="mSpd">—</div><div class="u">km/h</div></div>
+    <div class="cell"><div class="k">Distance</div><div class="v" id="mDist">0</div><div class="u">metres</div></div>
+    <div class="cell"><div class="k">Error</div><div class="v" id="mErr">—</div><div class="u">metres</div></div>
+  </div>
+
+  <div class="diag" id="diag">Engine idle.</div>
+
+  <div class="ctl">
+    <button class="act primary" id="bStart">Start</button>
+    <button class="act danger" id="bCut" disabled>Cut GNSS</button>
+    <button class="act" id="bReset">Reset</button>
+  </div>
+</div>
+<script>
+/* ===========================================================================
+   VAAHAK — live phone DR + local OSM map matching
+
+   Map-matching strategy:
+     1. GNSS is used while healthy to obtain the current location.
+     2. A small road network is fetched around the first reliable fix from
+        OpenStreetMap via Overpass and cached in memory.
+     3. Each GNSS/DR position is scored against nearby road segments using
+        distance + heading agreement.
+     4. The winning segment is projected to its nearest point.
+     5. During GNSS outage, the DR position is constrained to that cached road.
+   =========================================================================== */
+
+const $ = id => document.getElementById(id);
+const R_E = 6371000, G = 9.80665;
+const ROAD_RADIUS_M = 180;
+const MATCH_RADIUS_M = 45;
+const HEADING_WEIGHT = 0.55;
+const DIST_WEIGHT = 1.0;
+
+const S = {
+  running:false, cut:false, t0:0, tCut:0,
+  lat0:null, lon0:null,
+  grav:[0,0,G], up:[0,0,1],
+  yawBias:0, yawBiasN:0, psi:0, psiInit:false,
+  v:0, px:0, py:0, mmx:0, mmy:0, dist:0,
+  truth:[], pred:[], matched:[], lastT:null,
+  vib:0, vibLP:0, calX:[], calY:[], calA:0, calB:0, calN:0,
+  lastFixT:0, lastFix:null, stationary:false,
+  sensors:[], watchId:null, err:0,
+  nAcc:0, nGyro:0, nFix:0, gnssErr:null,
+  api:'—', notes:[],
+  roads:[], roadLayer:null, rawLayer:null, drLayer:null,
+  mmLayer:null, posMarker:null, mmMarker:null, map:null,
+  lastMM:null, mmReady:false, roadFetchInFlight:false
+};
+
+function log(m){ $('diag').innerHTML=m; }
+function norm(v){const n=Math.hypot(v[0],v[1],v[2])||1;return[v[0]/n,v[1]/n,v[2]/n];}
+function dot(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
+function cross(a,b){return[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];}
+function toXY(la,lo){
+  return [
+    (lo-S.lon0)*Math.PI/180*R_E*Math.cos(S.lat0*Math.PI/180),
+    (la-S.lat0)*Math.PI/180*R_E
+  ];
+}
+function toLL(x,y){
+  return [
+    S.lat0 + (y/R_E)*180/Math.PI,
+    S.lon0 + (x/(R_E*Math.cos(S.lat0*Math.PI/180)))*180/Math.PI
+  ];
+}
+function hav(a,b){
+  const dLat=(b[0]-a[0])*Math.PI/180, dLon=(b[1]-a[1])*Math.PI/180;
+  const la1=a[0]*Math.PI/180, la2=b[0]*Math.PI/180;
+  const q=Math.sin(dLat/2)**2+Math.cos(la1)*Math.cos(la2)*Math.sin(dLon/2)**2;
+  return 2*R_E*Math.asin(Math.min(1,Math.sqrt(q)));
+}
+function bearing(a,b){
+  const p1=a[0]*Math.PI/180,p2=b[0]*Math.PI/180;
+  const dl=(b[1]-a[1])*Math.PI/180;
+  return (Math.atan2(Math.sin(dl)*Math.cos(p2),
+    Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl))*180/Math.PI+360)%360;
+}
+function angDiff(a,b){return Math.abs((a-b+540)%360-180);}
+function projectToSegment(p,a,b){
+  const A=toXY(a[0],a[1]), B=toXY(b[0],b[1]), P=toXY(p[0],p[1]);
+  const dx=B[0]-A[0], dy=B[1]-A[1], den=dx*dx+dy*dy;
+  const t=den<1e-9?0:Math.max(0,Math.min(1,((P[0]-A[0])*dx+(P[1]-A[1])*dy)/den));
+  const qx=A[0]+t*dx, qy=A[1]+t*dy;
+  const ll=toLL(qx,qy);
+  return {lat:ll[0],lon:ll[1],dist:Math.hypot(P[0]-qx,P[1]-qy),t,bearing:bearing(a,b)};
+}
+
+/* ---------- Leaflet map ---------- */
+function initMap(){
+  S.map=L.map('leafletMap',{zoomControl:false,attributionControl:true});
+  L.control.zoom({position:'bottomright'}).addTo(S.map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    maxZoom:19,
+    attribution:'© OpenStreetMap contributors'
+  }).addTo(S.map);
+  S.map.setView([30.3165,78.0322],15);
+
+  const pill=L.control({position:'topright'});
+  pill.onAdd=function(){
+    const d=L.DomUtil.create('div','mm-pill');
+    d.id='mmPill'; d.innerHTML='<span class="mm-dot" style="background:#8494B0"></span>MAP MATCH <b>WAITING</b>';
+    return d;
+  };
+  pill.addTo(S.map);
+}
+function setMMStatus(text,good){
+  const p=$('mmPill'); if(!p)return;
+  p.innerHTML='<span class="mm-dot" style="background:'+(good?'#FFC24B':'#8494B0')+'"></span>MAP MATCH <b>'+text+'</b>';
+}
+function showMapAt(lat,lon,zoom=17){
+  if(S.map) S.map.setView([lat,lon],zoom);
+}
+
+/* ---------- OSM road cache ---------- */
+async function fetchRoads(lat,lon){
+  if(S.roadFetchInFlight)return;
+  S.roadFetchInFlight=true;
+  setMMStatus('LOADING',false);
+  const q=`[out:json][timeout:20];
+(
+  way(around:${ROAD_RADIUS_M},${lat},${lon})[highway~"motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street|service"];
+);
+out geom;`;
+  try{
+    const r=await fetch('https://overpass-api.de/api/interpreter',{
+      method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:'data='+encodeURIComponent(q)
+    });
+    if(!r.ok)throw new Error('Overpass HTTP '+r.status);
+    const j=await r.json();
+    S.roads=[];
+    j.elements.forEach(w=>{
+      if(!w.geometry||w.geometry.length<2)return;
+      for(let i=0;i<w.geometry.length-1;i++){
+        const a=[w.geometry[i].lat,w.geometry[i].lon];
+        const b=[w.geometry[i+1].lat,w.geometry[i+1].lon];
+        S.roads.push({a,b,name:w.tags?.name||'',highway:w.tags?.highway||''});
+      }
+    });
+    if(!S.roads.length)throw new Error('No nearby road geometry returned');
+    drawRoads();
+    S.mmReady=true;
+    setMMStatus(S.roads.length+' SEGMENTS',true);
+    log((S.api||'—')+'<br>Road cache: <b>'+S.roads.length+' segments</b><br>Map matching ready.');
+  }catch(e){
+    S.mmReady=false;
+    setMMStatus('OFFLINE',false);
+    log((S.api||'—')+'<br><b>Map matching unavailable:</b> '+e.message+'<br>DR continues without road constraint.');
+  }finally{S.roadFetchInFlight=false;}
+}
+function drawRoads(){
+  if(S.roadLayer)S.roadLayer.clearLayers();
+  S.roadLayer=L.layerGroup().addTo(S.map);
+  S.roads.forEach(r=>{
+    L.polyline([r.a,r.b],{color:'#FFFFFF',weight:2,opacity:.35}).addTo(S.roadLayer);
+  });
+}
+function nearestRoad(lat,lon,headingDeg){
+  if(!S.roads.length)return null;
+  let best=null;
+  const p=[lat,lon];
+  // Score distance plus heading disagreement. Heading is ignored at near-zero speed.
+  for(const r of S.roads){
+    const q=projectToSegment(p,r.a,r.b);
+    if(q.dist>MATCH_RADIUS_M)continue;
+    const hd=angDiff(headingDeg,q.bearing);
+    const hd2=Math.min(hd,Math.abs(180-hd)); // direction-agnostic road geometry
+    const score=DIST_WEIGHT*q.dist + HEADING_WEIGHT*hd2;
+    if(!best||score<best.score)best={...q,score,road:r,headingError:hd2};
+  }
+  return best;
+}
+function mapMatch(lat,lon,headingDeg){
+  if(!S.mmReady)return null;
+  const m=nearestRoad(lat,lon,headingDeg);
+  if(!m)return null;
+  const xy=toXY(m.lat,m.lon);
+  S.lastMM=m;
+  return {lat:m.lat,lon:m.lon,x:xy[0],y:xy[1],dist:m.dist,score:m.score,
+          road:m.road,headingError:m.headingError};
+}
+
+/* ---------- sensors ---------- */
+function startSensors(){
+  const notes=[];
+  notes.push('secure context: '+(window.isSecureContext?'yes':'NO (sensors need https)'));
+  notes.push('in iframe: '+(window.self!==window.top?'YES — sensors are usually blocked here':'no'));
+  if('Accelerometer' in window && 'Gyroscope' in window){
+    try{
+      const acc=new Accelerometer({frequency:50});
+      acc.addEventListener('reading',()=>onAccel(acc.timestamp/1000,[acc.x,acc.y,acc.z]));
+      acc.start();S.sensors.push(acc);
+      const gyr=new Gyroscope({frequency:50});
+      gyr.addEventListener('reading',()=>onGyro(gyr.timestamp/1000,[gyr.x,gyr.y,gyr.z]));
+      gyr.start();S.sensors.push(gyr);
+      S.api='Generic Sensor API @50Hz';notes.push('Generic Sensor API: started');
+    }catch(e){S.api='sensor error: '+e.message;notes.push('Generic Sensor FAILED: '+e.name+' '+e.message);}
+  }else if('DeviceMotionEvent' in window){
+    const go=()=>{window.addEventListener('devicemotion',ev=>{
+      const t=ev.timeStamp/1000,a=ev.accelerationIncludingGravity,r=ev.rotationRate;
+      if(a&&a.x!==null)onAccel(t,[a.x,a.y,a.z]);
+      if(r&&r.alpha!==null)onGyro(t,[r.beta*Math.PI/180,r.gamma*Math.PI/180,r.alpha*Math.PI/180]);
+    });S.api='DeviceMotion (fallback)';};
+    if(typeof DeviceMotionEvent.requestPermission==='function')
+      DeviceMotionEvent.requestPermission().then(s=>s==='granted'?go():log('Motion permission denied.'));
+    else go();
+  }else log('No motion sensors available in this browser.');
+  if('geolocation' in navigator){
+    S.watchId=navigator.geolocation.watchPosition(onFix,e=>{
+      S.gnssErr=e.message;showNotes();
+    },{enableHighAccuracy:true,maximumAge:0,timeout:30000});
+    notes.push('geolocation: requested');
+  }else notes.push('geolocation: NOT AVAILABLE');
+  S.notes=notes;showNotes();
+  setTimeout(()=>{if(S.nAcc===0||S.nGyro===0)showNotes();},4000);
+}
+function showNotes(){
+  const n=(S.notes||[]).slice();
+  n.push('accel samples: '+(S.nAcc||0)+' · gyro samples: '+(S.nGyro||0)+' · GNSS fixes: '+(S.nFix||0));
+  if(S.gnssErr)n.push('GNSS error: '+S.gnssErr);
+  if((S.nAcc||0)===0)n.push('<b>No motion data.</b> Open this page in its own HTTPS tab.');
+  log(n.join('<br>'));
+}
+function stopSensors(){
+  S.sensors.forEach(s=>{try{s.stop()}catch(e){}});
+  S.sensors=[];
+  if(S.watchId!==null){navigator.geolocation.clearWatch(S.watchId);S.watchId=null;}
+}
+
+/* ---------- accelerometer ---------- */
+function onAccel(t,a){
+  if(!S.running)return;
+  S.nAcc++;if(S.nAcc===1)showNotes();
+  const k=.02;
+  for(let i=0;i<3;i++)S.grav[i]+=k*(a[i]-S.grav[i]);
+  S.up=norm(S.grav);
+  const lin=[a[0]-S.grav[0],a[1]-S.grav[1],a[2]-S.grav[2]];
+  const gcomp=dot(lin,S.up);
+  const h=[lin[0]-gcomp*S.up[0],lin[1]-gcomp*S.up[1],lin[2]-gcomp*S.up[2]];
+  const mag=Math.hypot(h[0],h[1],h[2]);
+  S.vibLP+=.05*(mag-S.vibLP);S.vib=S.vibLP;
+  S.stationary=S.vib<.25;S.lastAccel=lin;
+}
+
+/* ---------- gyroscope ---------- */
+function onGyro(t,w){
+  if(!S.running)return;
+  S.nGyro++;
+  if(S.lastT===null){S.lastT=t;return;}
+  let dt=t-S.lastT;S.lastT=t;if(dt<=0||dt>.5)return;
+  const wz=dot(w,S.up);
+  if(S.stationary&&!S.cut)S.yawBias+=(wz-S.yawBias)/Math.min(++S.yawBiasN,400);
+  const rate=wz-S.yawBias;
+  if(S.psiInit)S.psi+=rate*dt;
+
+  if(S.psiInit){
+    const v=S.stationary?0:S.v,d=v*dt;
+    S.px+=d*Math.sin(S.psi);S.py+=d*Math.cos(S.psi);
+    if(S.cut)S.dist+=d;
+    if(d>.2||S.pred.length===0){
+      S.pred.push([S.px,S.py]);
+      if(S.cut&&S.mmReady){
+        const ll=toLL(S.px,S.py);
+        const mm=mapMatch(ll[0],ll[1],(S.psi*180/Math.PI+360)%360);
+        if(mm){
+          // Road-constrained position is the navigation position during outage.
+          S.mmx=mm.x;S.mmy=mm.y;
+          S.matched.push([mm.x,mm.y]);
+          S.err=Math.hypot(mm.x-S.px,mm.y-S.py);
+        }else{
+          S.mmx=S.px;S.mmy=S.py;
+          S.matched.push([S.px,S.py]);
+        }
+      }
+    }
+  }
+
+  if(S.cut&&S.calN>8){
+    const est=S.calA*S.vib+S.calB;
+    S.v=S.stationary?0:Math.max(0,Math.min(45,est));
+  }
+  draw();
+}
+
+/* ---------- GNSS ---------- */
+function onFix(p){
+  if(!S.running)return;
+  const c=p.coords;
+  S.nFix++;S.gnssErr=null;
+  if(S.lat0===null){S.lat0=c.latitude;S.lon0=c.longitude;}
+  const [x,y]=toXY(c.latitude,c.longitude);
+  S.truth.push([x,y]);S.lastFix=[x,y];S.lastFixT=performance.now()/1000;
+
+  if(!S.cut){
+    S.px=x;S.py=y;
+    if(c.speed!==null&&c.speed>1.5){
+      if(c.heading!==null){S.psi=c.heading*Math.PI/180;S.psiInit=true;}
+      S.calX.push(S.vib);S.calY.push(c.speed);
+      if(S.calX.length>400){S.calX.shift();S.calY.shift();}
+      if(S.calX.length>8){
+        const n=S.calX.length;
+        const mx=S.calX.reduce((a,b)=>a+b)/n,my=S.calY.reduce((a,b)=>a+b)/n;
+        let num=0,den=0;
+        for(let i=0;i<n;i++){num+=(S.calX[i]-mx)*(S.calY[i]-my);den+=(S.calX[i]-mx)**2;}
+        if(den>1e-6){S.calA=num/den;S.calB=my-S.calA*mx;S.calN=n;}
+      }
+      S.v=c.speed;
+    }
+    S.pred=[[x,y]];
+    // Build the local road cache after the first reliable position.
+    if(!S.mmReady&&!S.roadFetchInFlight)fetchRoads(c.latitude,c.longitude);
+    if(S.mmReady){
+      const mm=mapMatch(c.latitude,c.longitude,c.heading??S.psi*180/Math.PI);
+      if(mm){S.mmx=mm.x;S.mmy=mm.y;S.matched.push([mm.x,mm.y]);}
+    }
+    showMapAt(c.latitude,c.longitude,17);
+  }else{
+    // GNSS remains available to score error, but is never fed to DR.
+    S.err=Math.hypot(S.px-x,S.py-y);
+  }
+  draw();
+}
+
+/* ---------- drawing ---------- */
+function draw(){
+  if(!S.map||S.lat0===null)return;
+  $('hint').style.display='none';$('legend').style.display='block';
+
+  if(!S.rawLayer)S.rawLayer=L.layerGroup().addTo(S.map);
+  if(!S.drLayer)S.drLayer=L.layerGroup().addTo(S.map);
+  if(!S.mmLayer)S.mmLayer=L.layerGroup().addTo(S.map);
+
+  // Redraw lightweight polylines. These are local test/demo traces, not OSM data.
+  S.rawLayer.clearLayers();S.drLayer.clearLayers();S.mmLayer.clearLayers();
+
+  if(S.truth.length>1){
+    const pts=S.truth.map(p=>toLL(p[0],p[1]));
+    L.polyline(pts,{color:'#19C2CE',weight:4,opacity:.85}).addTo(S.rawLayer);
+  }
+  if(S.pred.length>1){
+    const pts=S.pred.map(p=>toLL(p[0],p[1]));
+    L.polyline(pts,{color:'#FF5C5C',weight:3,opacity:.8,dashArray:'6 5'}).addTo(S.drLayer);
+  }
+  if(S.matched.length>1){
+    const pts=S.matched.map(p=>toLL(p[0],p[1]));
+    L.polyline(pts,{color:'#FFC24B',weight:5,opacity:.95}).addTo(S.mmLayer);
+  }
+
+  const curLL=toLL(S.cut&&S.mmReady?S.mmx:S.px,S.cut&&S.mmReady?S.mmy:S.py);
+  if(!S.posMarker){
+    S.posMarker=L.circleMarker(curLL,{radius:7,color:'#070B16',weight:2,fillColor:'#19C2CE',fillOpacity:1}).addTo(S.map);
+  }else S.posMarker.setLatLng(curLL);
+  S.posMarker.setStyle({fillColor:S.cut?'#FF5C5C':'#19C2CE'});
+
+  if(S.cut&&S.mmReady&&S.lastMM){
+    if(!S.mmMarker)S.mmMarker=L.circleMarker([S.lastMM.lat,S.lastMM.lon],
+      {radius:6,color:'#070B16',weight:2,fillColor:'#FFC24B',fillOpacity:1}).addTo(S.map);
+    else S.mmMarker.setLatLng([S.lastMM.lat,S.lastMM.lon]);
+  }else if(S.mmMarker){S.map.removeLayer(S.mmMarker);S.mmMarker=null;}
+
+  $('mSpd').textContent=(S.v*3.6).toFixed(0);
+  $('mDist').textContent=S.dist.toFixed(0);
+  $('mErr').textContent=S.cut?S.err.toFixed(1):'—';
+  $('mErr').style.color=!S.cut?'':(S.dist>20&&100*S.err/S.dist<10?'var(--green)':'var(--amber)');
+  if(S.cut)$('age').textContent=(performance.now()/1000-S.tCut).toFixed(0)+'s';
+
+  const mmTxt=S.cut&&S.mmReady&&S.lastMM
+    ? '<br>map match: <b>'+S.lastMM.dist.toFixed(1)+' m</b> · heading Δ '+S.lastMM.headingError.toFixed(0)+'°'
+    : '<br>map match: <b>'+(S.mmReady?'ready':'loading')+'</b>';
+
+  log('<b>'+(S.api||'—')+'</b><br>'+
+      'up ['+S.up.map(x=>x.toFixed(2)).join(' ')+'] · heading '+((S.psi*180/Math.PI+360)%360).toFixed(0)+'°<br>'+
+      'yaw bias '+(S.yawBias*180/Math.PI).toFixed(3)+' °/s · vibration '+S.vib.toFixed(3)+' m/s²<br>'+
+      'speed fit: v ≈ '+S.calA.toFixed(2)+'·vib '+(S.calB>=0?'+':'')+S.calB.toFixed(2)+
+      ' ('+S.calN+' samples)'+(S.stationary?' · <b>stationary</b>':'')+mmTxt);
+}
+
+/* ---------- controls ---------- */
+$('bStart').onclick=()=>{
+  if(S.running)return;
+  S.running=true;S.lastT=null;S.t0=performance.now()/1000;
+  startSensors();
+  $('status').className='status';$('stText').textContent='GNSS LOCKED — calibrating';
+  $('bCut').disabled=false;$('bStart').disabled=true;
+};
+$('bCut').onclick=()=>{
+  if(!S.running)return;
+  if(!S.cut){
+    if(S.calN<8){log('<b>Not calibrated yet.</b> Keep moving with GNSS for ~20 s so the speed fit can form.');return;}
+    S.cut=true;S.tCut=performance.now()/1000;S.dist=0;S.pred=[[S.px,S.py]];
+    S.matched=[];S.mmx=S.px;S.mmy=S.py;
+    $('status').className='status lost';$('stText').textContent='GNSS CUT — DR + MAP MATCH';
+    $('bCut').textContent='Restore GNSS';
+    setMMStatus(S.mmReady?'ACTIVE':'WAITING',S.mmReady);
+  }else{
+    S.cut=false;$('status').className='status';$('stText').textContent='GNSS LOCKED';
+    $('bCut').textContent='Cut GNSS';$('age').textContent='';
+    setMMStatus(S.mmReady?'READY':'WAITING',S.mmReady);
+  }
+};
+$('bReset').onclick=()=>{
+  stopSensors();
+  if(S.map){['roadLayer','rawLayer','drLayer','mmLayer'].forEach(k=>{
+    if(S[k]){try{S.map.removeLayer(S[k])}catch(e){}}
+  });if(S.posMarker){S.map.removeLayer(S.posMarker);S.posMarker=null;}
+  if(S.mmMarker){S.map.removeLayer(S.mmMarker);S.mmMarker=null;}}
+  Object.assign(S,{running:false,cut:false,truth:[],pred:[],matched:[],dist:0,err:0,v:0,
+    calX:[],calY:[],calA:0,calB:0,calN:0,yawBias:0,yawBiasN:0,psiInit:false,
+    lat0:null,lon0:null,lastT:null,roads:[],mmReady:false,roadFetchInFlight:false,lastMM:null,
+    mmx:0,mmy:0,nAcc:0,nGyro:0,nFix:0});
+  $('status').className='status idle';$('stText').textContent='Not started';$('age').textContent='';
+  $('bStart').disabled=false;$('bCut').disabled=true;$('bCut').textContent='Cut GNSS';
+  $('hint').style.display='flex';$('legend').style.display='none';
+  $('mSpd').textContent='—';$('mDist').textContent='0';$('mErr').textContent='—';
+  setMMStatus('WAITING',false);log('Engine idle.');
+};
+$('tabLive').onclick=()=>{$('tabLive').classList.add('on');$('tabReplay').classList.remove('on');};
+$('tabReplay').onclick=()=>{
+  $('tabReplay').classList.add('on');$('tabLive').classList.remove('on');
+  log('<b>Replay mode</b><br>Recorded IO-VNBD drives are evaluated offline in the engine harness. Live mode uses phone sensors and local OSM road matching.');
+};
+
+initMap();
+</script>
+</body>
+</html>
