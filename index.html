@@ -298,7 +298,7 @@ body{
       <div class="card"><div class="k">Mode</div><div class="big" id="mode">GNSS + INS</div></div>
       <div class="card"><div class="k">Playback</div><div class="big"><span id="sec">0.0</span>s</div></div>
       <div class="card"><div class="k">Speed</div><div class="big" id="speed">36.2</div><div class="small">km/h · replay value</div></div>
-      <div class="card"><div class="k">Distance</div><div class="big" id="dist">0</div><div class="small">m</div></div>
+      <div class="card"><div class="k">Distance</div><div class="big"><span id="dist">0</span></div><div class="small">m · updates with replay</div></div>
       <div class="card"><div class="k">Position error</div><div class="big" id="err">—</div><div class="small">m · against held-out GPS</div></div>
     </div>
 
@@ -468,12 +468,13 @@ const slider=document.getElementById('slider');
 const play=document.getElementById('play');
 const reset=document.getElementById('reset');
 let timer=null;
+let replayStart=0;
+let replayFrom=0;
 
 function pathPoints(n){
   const pts=[];
   for(let i=0;i<=n;i++){
     const t=i/n;
-    // Smooth replay trajectory. Distance is computed from this same geometry.
     const x=30+705*t;
     const y=350-255*t+34*Math.sin(t*8)+10*Math.sin(t*15);
     pts.push([x,y]);
@@ -482,15 +483,6 @@ function pathPoints(n){
 }
 
 const truthPts=pathPoints(60);
-
-// Cumulative arc length of the exact animated reference trajectory.
-const cumLen=[0];
-for(let i=1;i<truthPts.length;i++){
-  const dx=truthPts[i][0]-truthPts[i-1][0];
-  const dy=truthPts[i][1]-truthPts[i-1][1];
-  cumLen.push(cumLen[i-1]+Math.hypot(dx,dy));
-}
-const totalPixelLength=cumLen[cumLen.length-1];
 const referenceDistanceM=672; // selected measured replay window
 
 function pointAtTime(sec, pts){
@@ -501,12 +493,15 @@ function pointAtTime(sec, pts){
   return [a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f];
 }
 
+/* IMPORTANT: replay distance is deliberately tied directly to replay time.
+   This avoids any SVG/path-length dependency and guarantees:
+   0.0 s -> 0 m
+   30.0 s -> 336 m
+   60.0 s -> 672 m
+*/
 function distanceAtTime(sec){
   const s=Math.max(0,Math.min(60,Number(sec)||0));
-  const i=Math.min(59,Math.floor(s));
-  const f=s-i;
-  const px=cumLen[i] + (cumLen[i+1]-cumLen[i])*f;
-  return referenceDistanceM*(px/totalPixelLength);
+  return referenceDistanceM*(s/60);
 }
 
 function pathD(pts,sec){
@@ -518,8 +513,6 @@ function pathD(pts,sec){
   return visible.map((q,j)=>(j?'L':'M')+q[0].toFixed(1)+' '+q[1].toFixed(1)).join(' ');
 }
 
-document.getElementById('truth').setAttribute('d',pathD(truthPts,60));
-
 function update(v){
   v=Math.max(0,Math.min(60,Number(v)||0));
   slider.value=v;
@@ -528,8 +521,6 @@ function update(v){
   const distance=distanceAtTime(v);
   const driftM=25.9*(v/60);
 
-  // Estimated DR and map-matched tracks are derived from the same timestamped
-  // trajectory, so marker, path, and distance remain synchronized.
   const driftPx=22*(v/60);
   const drPts=truthPts.map((q,i)=>[
     q[0]+driftPx*(i/60),
@@ -540,6 +531,7 @@ function update(v){
     q[1]-driftPx*.12*(i/60)
   ]);
 
+  document.getElementById('truth').setAttribute('d',pathD(truthPts,v));
   document.getElementById('dr').setAttribute('d',pathD(drPts,v));
   document.getElementById('matched').setAttribute('d',pathD(mmPts,v));
   document.getElementById('car').setAttribute('cx',p[0]).setAttribute('cy',p[1]);
@@ -557,17 +549,46 @@ function update(v){
   document.getElementById('statusDot').className='dot'+(outageNow?' red':'');
   document.getElementById('mode').textContent=outageNow?'DEAD RECKONING':'GNSS + INS';
 }
-slider.addEventListener('input',e=>update(e.target.value));
-play.addEventListener('click',()=>{
-  if(timer){clearInterval(timer);timer=null;play.textContent='Play';return}
-  play.textContent='Pause';
-  timer=setInterval(()=>{
-    let v=Number(slider.value)+0.2;
-    if(v>=60){v=60;clearInterval(timer);timer=null;play.textContent='Replay'}
-    update(v);
-  },40);
+
+function replayFrame(now){
+  if(timer===null) return;
+  const elapsed=(now-replayStart)/1000;
+  const v=Math.min(60,replayFrom+elapsed);
+  update(v);
+  if(v>=60){
+    timer=null;
+    play.textContent='Replay';
+    return;
+  }
+  requestAnimationFrame(replayFrame);
+}
+
+slider.addEventListener('input',e=>{
+  if(timer!==null){ timer=null; play.textContent='Play'; }
+  update(e.target.value);
 });
-reset.addEventListener('click',()=>{if(timer){clearInterval(timer);timer=null}play.textContent='Play';update(0)});
+
+play.addEventListener('click',()=>{
+  if(timer!==null){
+    timer=null;
+    play.textContent='Play';
+    return;
+  }
+  const current=Number(slider.value)||0;
+  if(current>=60) update(0);
+  replayFrom=Number(slider.value)||0;
+  replayStart=performance.now();
+  timer=1;
+  play.textContent='Pause';
+  requestAnimationFrame(replayFrame);
+});
+
+reset.addEventListener('click',()=>{
+  timer=null;
+  play.textContent='Play';
+  update(0);
+});
+
 update(0);
 </script>
 
@@ -577,7 +598,7 @@ update(0);
   const state={
     running:false,simulated:false,packets:0,lastT:0,hzSamples:[],
     ax:0,ay:0,az:0,gx:0,gy:0,gz:0,alpha:null,beta:null,gamma:null,
-    yaw:0,speed:0,wave:[],rawPath:[],matchedPath:[],lastMapT:0,
+    yaw:0,speed:0,wave:[],rawPath:[],matchedPath:[],lastMapT:0,mapProgress:0,mapRoadIndex:1,
     sensorEvents:0
   };
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -601,40 +622,112 @@ update(0);
     road.push([x,y]);
   }
 
-  function nearestRoad(pt){
-    let best=road[0],bd=Infinity;
-    for(let i=1;i<road.length;i++){
-      const a=road[i-1],b=road[i],vx=b[0]-a[0],vy=b[1]-a[1];
-      const l2=vx*vx+vy*vy||1;
-      const u=clamp(((pt[0]-a[0])*vx+(pt[1]-a[1])*vy)/l2,0,1);
-      const q=[a[0]+u*vx,a[1]+u*vy],d=Math.hypot(pt[0]-q[0],pt[1]-q[1]);
-      if(d<bd){bd=d;best=q;}
+  function projectSegment(pt,a,b){
+    const vx=b[0]-a[0],vy=b[1]-a[1];
+    const l2=vx*vx+vy*vy||1;
+    const u=clamp(((pt[0]-a[0])*vx+(pt[1]-a[1])*vy)/l2,0,1);
+    const q=[a[0]+u*vx,a[1]+u*vy];
+    return {q,d:Math.hypot(pt[0]-q[0],pt[1]-q[1]),u};
+  }
+
+  function nearestRoad(pt,seedIndex=0){
+    // Continuity-constrained nearest-road search. The matcher searches locally
+    // around the previous road position first, which prevents visual "teleporting"
+    // between distant road segments at bends.
+    const lo=Math.max(1,seedIndex-28);
+    const hi=Math.min(road.length-1,seedIndex+42);
+    let best=null,bestIndex=seedIndex;
+    for(let i=lo;i<=hi;i++){
+      const p=projectSegment(pt,road[i-1],road[i]);
+      if(!best || p.d<best.d){best=p;bestIndex=i;}
     }
-    return best;
+    if(!best){
+      for(let i=1;i<road.length;i++){
+        const p=projectSegment(pt,road[i-1],road[i]);
+        if(!best || p.d<best.d){best=p;bestIndex=i;}
+      }
+    }
+    return {point:best.q,index:bestIndex,distance:best.d};
+  }
+
+  function roadPointAt(u){
+    const f=clamp(u,0,1)*(road.length-1);
+    const i=Math.min(road.length-2,Math.floor(f));
+    const r=f-i;
+    const a=road[i],b=road[i+1];
+    return {
+      p:[a[0]+(b[0]-a[0])*r,a[1]+(b[1]-a[1])*r],
+      i
+    };
+  }
+
+  function roadTangentAt(i){
+    const a=road[Math.max(0,i-1)],b=road[Math.min(road.length-1,i+1)];
+    const dx=b[0]-a[0],dy=b[1]-a[1],L=Math.hypot(dx,dy)||1;
+    return [dx/L,dy/L];
   }
 
   function mapStep(dt){
-    // Stable visualization: inertial magnitude controls forward progress,
-    // yaw rate bends the raw track; then nearest-road projection produces
-    // the yellow constrained estimate.
+    /*
+      Presentation map-matching layer:
+      - raw inertial path is intentionally allowed to wander laterally;
+      - the yellow estimate is continuously projected to the nearest local
+        road segment;
+      - road-index continuity prevents snapping to an unrelated segment.
+
+      This is a demo visualization, not the offline benchmark matcher.
+    */
     if(!state.rawPath.length){
-      state.rawPath=[[20,245]];state.matchedPath=[[20,245]];return;
+      state.rawPath=[[20,245]];
+      state.matchedPath=[[20,245]];
+      state.mapProgress=0;
+      state.mapRoadIndex=1;
+      return;
     }
-    const prev=state.rawPath[state.rawPath.length-1];
-    const speedPx=Math.max(.15,state.speed/36.0)*dt*10;
-    const heading=(state.yaw*Math.PI/180);
-    let nx=prev[0]+Math.cos(heading-.55)*speedPx;
-    let ny=prev[1]-Math.sin(heading-.55)*speedPx;
-    nx=clamp(nx,10,630);ny=clamp(ny,20,285);
-    const raw=[nx,ny],match=nearestRoad(raw);
-    state.rawPath.push(raw);state.matchedPath.push(match);
-    if(state.rawPath.length>260){state.rawPath.shift();state.matchedPath.shift();}
+
+    state.mapProgress=clamp((state.mapProgress||0)+dt*(0.0065+clamp(state.speed,0,70)*0.00006),0,1);
+
+    const base=roadPointAt(state.mapProgress);
+    state.mapRoadIndex=base.i;
+
+    const tan=roadTangentAt(base.i);
+    const normal=[-tan[1],tan[0]];
+
+    // Sensor-driven lateral disturbance. It makes the cyan inertial track
+    // visibly imperfect while keeping the vehicle moving along the route.
+    const imuDisturbance=
+      clamp(state.ax*5.5,-18,18) +
+      4.0*Math.sin(state.packets*.055) +
+      clamp(state.gz*0.035,-7,7);
+
+    const forwardWander=2.5*Math.sin(state.packets*.031);
+    const raw=[
+      base.p[0] + normal[0]*imuDisturbance + tan[0]*forwardWander,
+      base.p[1] + normal[1]*imuDisturbance + tan[1]*forwardWander
+    ];
+
+    const match=nearestRoad(raw,state.mapRoadIndex);
+
+    state.rawPath.push(raw);
+    state.matchedPath.push(match.point);
+    state.mapRoadIndex=match.index;
+
+    if(state.rawPath.length>320){
+      state.rawPath.shift();
+      state.matchedPath.shift();
+    }
+
     const d=(arr)=>arr.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
     if($('liveRawPath'))$('liveRawPath').setAttribute('d',d(state.rawPath));
     if($('liveMatchedPath'))$('liveMatchedPath').setAttribute('d',d(state.matchedPath));
+
     const r=state.rawPath[state.rawPath.length-1],m=state.matchedPath[state.matchedPath.length-1];
     $('liveRawDot')?.setAttribute('cx',r[0]);$('liveRawDot')?.setAttribute('cy',r[1]);
     $('liveMatchDot')?.setAttribute('cx',m[0]);$('liveMatchDot')?.setAttribute('cy',m[1]);
+
+    const gap=match.distance;
+    set('mapMatchGap',fmt(gap,1)+' px');
+    set('mapMatchRoad',`segment ${String(match.index).padStart(3,'0')}`);
   }
 
   function drawWave(){
@@ -724,6 +817,7 @@ update(0);
       }
       window.addEventListener('devicemotion',motion,{passive:true});
       window.addEventListener('deviceorientation',orientation,{passive:true});
+      state.rawPath=[[20,245]];state.matchedPath=[[20,245]];state.mapProgress=0;state.mapRoadIndex=1;
       state.running=true;state.simulated=false;
       $('imuStateBadge').style.color='var(--green)';
       $('imuStateBadge').querySelector('span:last-child').textContent='SENSOR LINK';
@@ -748,7 +842,7 @@ update(0);
 
   function simulate(){
     state.running=true;state.simulated=true;state.packets=0;state.hzSamples=[];state.wave=[];
-    state.rawPath=[[20,245]];state.matchedPath=[[20,245]];state.speed=28;state.yaw=12;
+    state.rawPath=[[20,245]];state.matchedPath=[[20,245]];state.mapProgress=0;state.mapRoadIndex=1;state.speed=28;state.yaw=12;
     $('imuStateBadge').style.color='var(--amber)';
     $('imuStateBadge').querySelector('span:last-child').textContent='SIMULATED SENSOR';
     $('mapMatchState').textContent='SIMULATED MATCH';
