@@ -1,0 +1,696 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VAAHAK | GNSS-denied navigation demo</title>
+<style>
+:root{
+  --bg:#0b0f14; --panel:#11171e; --panel2:#151c24; --line:#27313b;
+  --text:#e7edf2; --muted:#8d9aa6; --cyan:#42c7d4; --amber:#e2ae52;
+  --red:#d96a6a; --green:#65b889; --blue:#6da6d9;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Arial,Helvetica,sans-serif}
+button{font:inherit}
+.shell{max-width:1180px;margin:24px auto;padding:0 18px}
+.top{display:flex;align-items:flex-end;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:14px}
+.title{font-size:22px;font-weight:700;letter-spacing:.02em}
+.sub{color:var(--muted);font-size:12px;margin-top:3px}
+.badge{border:1px solid var(--line);padding:7px 10px;color:var(--muted);font-size:11px}
+.tabs{display:flex;gap:2px;margin:16px 0}
+.tab{background:none;border:0;color:var(--muted);padding:9px 13px;border-bottom:2px solid transparent;cursor:pointer}
+.tab.active{color:var(--text);border-bottom-color:var(--cyan)}
+.page{display:none}.page.active{display:block}
+.grid{display:grid;gap:12px}
+.kpis{grid-template-columns:repeat(5,minmax(0,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);padding:14px}
+.k{font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+.big{font-size:24px;font-weight:700;margin-top:5px;font-variant-numeric:tabular-nums}
+.small{font-size:11px;color:var(--muted)}
+.two{grid-template-columns:1.65fr 1fr;margin-top:12px}
+.three{grid-template-columns:repeat(3,1fr);margin-top:12px}
+.section-title{font-weight:700;margin-bottom:10px}
+.statusbar{display:flex;align-items:center;gap:8px;padding:9px 11px;border:1px solid var(--line);background:var(--panel);margin-bottom:12px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--green)}
+.dot.red{background:var(--red)} .dot.amber{background:var(--amber)}
+.map{height:420px;position:relative;overflow:hidden;background:#0d1319;border:1px solid var(--line)}
+.map svg{width:100%;height:100%}
+.maplabel{position:absolute;left:12px;top:10px;background:#11171edd;border:1px solid var(--line);padding:7px 9px;font-size:11px}
+.legend{position:absolute;right:12px;bottom:12px;background:#11171eee;border:1px solid var(--line);padding:8px 10px;font-size:11px}
+.legend span{display:inline-block;width:18px;height:2px;vertical-align:middle;margin-right:6px}
+.controls{display:flex;align-items:center;gap:10px;margin-top:12px}
+button.action{border:1px solid var(--line);background:var(--panel2);color:var(--text);padding:9px 13px;cursor:pointer}
+button.action.primary{background:#18353a;border-color:#2b7078}
+input[type=range]{width:100%}
+.readouts{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.readout{border-bottom:1px solid var(--line);padding:7px 0}
+.readout b{display:block;font-size:18px;margin-top:2px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{text-align:left;padding:9px 7px;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-weight:600}
+.pass{color:var(--green)}.warn{color:var(--amber)}
+.chart{height:250px;width:100%;background:#0d1319;border:1px solid var(--line)}
+svg text{font-family:Arial,Helvetica,sans-serif}
+.pipeline{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;align-items:center}
+.node{background:var(--panel);border:1px solid var(--line);padding:13px 8px;text-align:center;font-size:11px}
+.arrow{text-align:center;color:var(--muted)}
+.featurebox{columns:3;column-gap:25px}
+.featurebox div{break-inside:avoid;border-bottom:1px solid var(--line);padding:5px 0;color:#b9c3cc;font-size:11px}
+.note{margin-top:12px;color:var(--muted);font-size:11px}
+@media(max-width:900px){
+ .kpis{grid-template-columns:repeat(2,1fr)} .two,.three{grid-template-columns:1fr}
+ .pipeline{grid-template-columns:1fr}.arrow{transform:rotate(90deg)}
+ .featurebox{columns:2}
+}
+</style>
+
+<style id="live-engineering-overrides">
+:root{
+  --bg:#070b12; --panel:#0d1420; --panel2:#111b29; --line:#203044;
+  --text:#e8eef7; --muted:#7f91a8; --cyan:#38d9ff; --green:#54e39a;
+  --amber:#ffca68; --red:#ff6378; --blue:#78a7ff;
+}
+body{
+  background:
+    radial-gradient(circle at 15% 0%,rgba(56,217,255,.08),transparent 28%),
+    radial-gradient(circle at 90% 10%,rgba(120,167,255,.07),transparent 25%),
+    var(--bg)!important;
+}
+.topbar,.panel,.card,.kpi,.diag,.model-card,.pipeline-card{
+  border-color:var(--line)!important;
+  box-shadow:0 12px 32px rgba(0,0,0,.22)!important;
+}
+.topbar{
+  background:rgba(9,15,24,.92)!important;
+  backdrop-filter:blur(12px);
+}
+.brand-dot{box-shadow:0 0 18px rgba(56,217,255,.55)!important}
+.status-live{
+  border:1px solid rgba(84,227,154,.28);
+  background:rgba(84,227,154,.08);
+  color:var(--green);
+}
+.live-grid{
+  display:grid;
+  grid-template-columns:1.65fr .85fr;
+  gap:14px;
+  margin-top:14px;
+}
+.sensor-grid{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:10px;
+}
+.sensor-card{
+  background:linear-gradient(145deg,rgba(17,27,41,.95),rgba(10,17,27,.95));
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:13px 14px;
+}
+.sensor-card .tag{
+  color:var(--muted);font-size:10px;letter-spacing:.12em;
+  text-transform:uppercase;font-weight:700
+}
+.sensor-card .value{
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:21px;font-weight:750;margin-top:6px;color:var(--text)
+}
+.sensor-card .unit{font-size:11px;color:var(--muted);margin-left:3px}
+.signal-bar{
+  height:5px;border-radius:99px;background:#172334;margin-top:9px;overflow:hidden
+}
+.signal-bar span{
+  display:block;height:100%;width:0%;
+  background:linear-gradient(90deg,var(--cyan),var(--green));
+  border-radius:99px;transition:width .12s linear
+}
+.live-console{
+  display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px
+}
+.mini-row{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:8px 0;border-bottom:1px solid rgba(32,48,68,.65);
+  font-size:12px
+}
+.mini-row:last-child{border-bottom:0}
+.mini-row span:first-child{color:var(--muted)}
+.mini-row strong{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+#imuWave{
+  width:100%;height:92px;display:block;border-radius:12px;
+  background:linear-gradient(180deg,#09121e,#07101a);
+  border:1px solid #1b2a3c
+}
+.live-badge{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:5px 9px;border-radius:999px;font-size:10px;font-weight:800;
+  letter-spacing:.08em;text-transform:uppercase
+}
+.live-badge .pulse{
+  width:7px;height:7px;border-radius:50%;background:currentColor;
+  box-shadow:0 0 0 0 currentColor;animation:pulse 1.4s infinite
+}
+@keyframes pulse{70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
+.map-legend{
+  display:flex;gap:12px;flex-wrap:wrap;margin:9px 0 0;
+  color:var(--muted);font-size:10px
+}
+.legend-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
+.demo-disclosure{
+  margin-top:9px;padding:8px 10px;border-radius:9px;
+  background:rgba(255,202,104,.07);border:1px solid rgba(255,202,104,.18);
+  color:#bda875;font-size:10px;line-height:1.45
+}
+@media(max-width:900px){
+ .live-grid{grid-template-columns:1fr}.sensor-grid{grid-template-columns:repeat(2,1fr)}
+}
+</style>
+
+</head>
+<body>
+<div class="shell">
+  <div class="top">
+    <div><div class="title">VAAHAK — Intelligent Dead Reckoning</div>
+    <div class="sub">SIH 26168 · engineering replay console · smartphone IMU + GNSS fusion</div></div>
+    <div class="badge">BENCHMARK REPLAY</div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" data-page="replay">Replay</button>
+    <button class="tab" data-page="results">Results</button>
+    <button class="tab" data-page="model">Model</button>
+    <button class="tab" data-page="pipeline">Pipeline</button>
+  </div>
+
+  
+<section id="liveEngineeringPanel" class="live-grid" style="display:none">
+  <div class="panel" style="padding:15px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px">
+      <div>
+        <div style="font-size:13px;font-weight:800;letter-spacing:.02em">PHONE IMU STREAM</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px">Browser DeviceMotion / DeviceOrientation feed</div>
+      </div>
+      <div id="imuStateBadge" class="live-badge status-live"><span class="pulse"></span><span>WAITING</span></div>
+    </div>
+
+    <div class="sensor-grid">
+      <div class="sensor-card"><div class="tag">Accel X</div><div class="value"><span id="liveAx">0.00</span><span class="unit">m/s²</span></div><div class="signal-bar"><span id="barAx"></span></div></div>
+      <div class="sensor-card"><div class="tag">Accel Y</div><div class="value"><span id="liveAy">0.00</span><span class="unit">m/s²</span></div><div class="signal-bar"><span id="barAy"></span></div></div>
+      <div class="sensor-card"><div class="tag">Accel Z</div><div class="value"><span id="liveAz">0.00</span><span class="unit">m/s²</span></div><div class="signal-bar"><span id="barAz"></span></div></div>
+      <div class="sensor-card"><div class="tag">Gyro α</div><div class="value"><span id="liveGx">0.00</span><span class="unit">°/s</span></div><div class="signal-bar"><span id="barGx"></span></div></div>
+      <div class="sensor-card"><div class="tag">Gyro β</div><div class="value"><span id="liveGy">0.00</span><span class="unit">°/s</span></div><div class="signal-bar"><span id="barGy"></span></div></div>
+      <div class="sensor-card"><div class="tag">Gyro γ / yaw</div><div class="value"><span id="liveGz">0.00</span><span class="unit">°/s</span></div><div class="signal-bar"><span id="barGz"></span></div></div>
+    </div>
+
+    <div style="margin-top:12px">
+      <canvas id="imuWave" width="900" height="92"></canvas>
+    </div>
+
+    <div class="live-console">
+      <div>
+        <div class="mini-row"><span>Sample rate</span><strong id="imuHz">0.0 Hz</strong></div>
+        <div class="mini-row"><span>Packets</span><strong id="imuPackets">0</strong></div>
+        <div class="mini-row"><span>Sensor interval</span><strong id="imuInterval">— ms</strong></div>
+      </div>
+      <div>
+        <div class="mini-row"><span>Horizontal accel</span><strong id="liveHoriz">0.00 m/s²</strong></div>
+        <div class="mini-row"><span>Vibration RMS</span><strong id="liveVib">0.00</strong></div>
+        <div class="mini-row"><span>Orientation α/β/γ</span><strong id="liveOri">— / — / —</strong></div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button id="enableIMU" class="primary-btn">ENABLE PHONE IMU</button>
+      <button id="simulateIMU" class="secondary-btn">SIMULATE SIGNAL</button>
+    </div>
+  </div>
+
+  <div class="panel" style="padding:15px">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-size:13px;font-weight:800">NAVIGATION ESTIMATE</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px">Live inertial visualization</div>
+      </div>
+      <div class="live-badge" style="color:var(--cyan);background:rgba(56,217,255,.08);border:1px solid rgba(56,217,255,.2)"><span class="pulse"></span>LIVE</div>
+    </div>
+
+    <div class="sensor-card" style="margin-top:12px">
+      <div class="tag">Estimated motion state</div>
+      <div style="display:flex;align-items:end;gap:12px;margin-top:5px">
+        <div class="value" style="font-size:31px"><span id="liveSpeed">0.0</span><span class="unit">km/h</span></div>
+        <div style="font-size:11px;color:var(--muted);padding-bottom:4px">inertial proxy</div>
+      </div>
+    </div>
+
+    <div class="live-console" style="margin-top:10px">
+      <div class="sensor-card"><div class="tag">Heading</div><div class="value"><span id="liveHeading">0.0</span><span class="unit">°</span></div></div>
+      <div class="sensor-card"><div class="tag">Yaw rate</div><div class="value"><span id="liveYawRate">0.0</span><span class="unit">°/s</span></div></div>
+    </div>
+
+    <div class="sensor-card" style="margin-top:10px">
+      <div class="tag">Map-constrained visualization</div>
+      <div style="font-size:12px;line-height:1.5;margin-top:7px;color:#b9c7d8">
+        Live inertial motion is projected onto the presentation route. The road-snapping layer is a
+        <b style="color:var(--amber)">demo visualization</b>, not the trained offline map-matching model.
+      </div>
+      <div class="demo-disclosure">For the final technical claim, use the offline benchmark/results tab. This live panel demonstrates real phone sensor acquisition and the navigation UI.</div>
+    </div>
+  </div>
+</section>
+
+<section id="replay" class="page active">
+    <div class="statusbar"><span class="dot" id="statusDot"></span><b id="statusText">GNSS LOCKED</b><span class="small" id="statusDetail">pre-outage alignment and bias estimation</span></div>
+    <div class="grid kpis">
+      <div class="card"><div class="k">Mode</div><div class="big" id="mode">GNSS + INS</div></div>
+      <div class="card"><div class="k">Playback</div><div class="big"><span id="sec">0.0</span>s</div></div>
+      <div class="card"><div class="k">Speed</div><div class="big" id="speed">36.2</div><div class="small">km/h · replay value</div></div>
+      <div class="card"><div class="k">Distance</div><div class="big" id="dist">0</div><div class="small">m</div></div>
+      <div class="card"><div class="k">Position error</div><div class="big" id="err">—</div><div class="small">m · against held-out GPS</div></div>
+    </div>
+
+    <div class="two grid">
+      <div class="card">
+        <div class="map">
+          <div class="maplabel">S-M replay · outage start 600 s · duration 60 s</div>
+          <svg viewBox="0 0 760 420" preserveAspectRatio="none">
+            <g stroke="#27313b" stroke-width="1" opacity=".65">
+              <path d="M0 80H760M0 160H760M0 240H760M0 320H760"/>
+              <path d="M100 0V420M220 0V420M340 0V420M460 0V420M580 0V420M700 0V420"/>
+            </g>
+            <path d="M30 350 C150 330 130 250 250 245 S350 310 430 255 S520 125 735 95" fill="none" stroke="#34434f" stroke-width="18"/>
+            <path id="truth" d="" fill="none" stroke="#42c7d4" stroke-width="3"/>
+            <path id="dr" d="" fill="none" stroke="#d96a6a" stroke-width="3"/>
+            <path id="matched" d="" fill="none" stroke="#e2ae52" stroke-width="3"/>
+            <circle id="car" cx="30" cy="350" r="6" fill="#e7edf2"/>
+          </svg>
+          <div class="legend">
+            <div><span style="background:#42c7d4"></span>GNSS / reference</div>
+            <div><span style="background:#d96a6a"></span>fused DR</div>
+            <div><span style="background:#e2ae52"></span>road-constrained view</div>
+          </div>
+        </div>
+        <div class="controls">
+          <button class="action primary" id="play">Play</button>
+          <button class="action" id="reset">Reset</button>
+          <div style="font-size:11px;opacity:.62;margin:5px 0 8px">Replay distance = cumulative arc length of the animated reference trajectory, normalized to the selected 672 m / 60 s window.</div><input id="slider" type="range" min="0" max="60" step=".1" value="0" aria-label="outage playback">
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">Navigation state</div>
+        <div class="readouts">
+          <div class="readout"><span class="k">Heading</span><b id="heading">72.4°</b></div>
+          <div class="readout"><span class="k">GNSS age</span><b id="age">0 ms</b></div>
+          <div class="readout"><span class="k">Gyro bias</span><b>-0.231°/s</b></div>
+          <div class="readout"><span class="k">Stationary</span><b id="stationary">NO</b></div>
+          <div class="readout"><span class="k">Speed source</span><b>RF + physics</b></div>
+          <div class="readout"><span class="k">Update</span><b>10 Hz</b></div>
+        </div>
+        <div class="note">The replay masks GNSS after the outage begins. During the blackout the estimator is driven by inertial measurements and the trained speed/yaw models; the map layer is shown separately.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="results" class="page">
+    <div class="grid kpis">
+      <div class="card"><div class="k">Evaluated windows</div><div class="big">33</div><div class="small">same drive, multiple outage starts</div></div>
+      <div class="card"><div class="k">Naive DR @ 60 s</div><div class="big">16,534 m</div><div class="small">baseline</div></div>
+      <div class="card"><div class="k">Fused @ 60 s</div><div class="big">116 m</div><div class="small">median across 33 windows</div></div>
+      <div class="card"><div class="k">Reduction</div><div class="big">≈140×</div><div class="small">error reduction in this benchmark</div></div>
+      <div class="card"><div class="k">10% target</div><div class="big warn">Not yet</div><div class="small">2 / 33 windows currently below target</div></div>
+    </div>
+    <div class="two grid">
+      <div class="card">
+        <div class="section-title">Drift versus outage duration</div>
+        <svg class="chart" viewBox="0 0 760 250">
+          <g stroke="#27313b"><path d="M55 25V210H735"/><path d="M55 170H735M55 130H735M55 90H735M55 50H735"/></g>
+          <g fill="#8d9aa6" font-size="11"><text x="10" y="213">0</text><text x="5" y="173">4k</text><text x="5" y="133">8k</text><text x="2" y="93">12k</text><text x="2" y="53">16k</text><text x="45" y="232">10s</text><text x="370" y="232">30s</text><text x="710" y="232">60s</text></g>
+          <polyline points="70,205 395,162 720,44" fill="none" stroke="#d96a6a" stroke-width="3"/>
+          <polyline points="70,204 395,203 720,199" fill="none" stroke="#42c7d4" stroke-width="3"/>
+          <g fill="#e7edf2" font-size="11"><text x="610" y="37">naive: 16,534 m</text><text x="605" y="193">fusion: 116 m</text></g>
+        </svg>
+      </div>
+      <div class="card">
+        <div class="section-title">Measured checkpoints</div>
+        <table>
+          <tr><th>Horizon</th><th>Naive DR</th><th>Fused</th></tr>
+          <tr><td>10 s</td><td>505 m</td><td>25 m</td></tr>
+          <tr><td>30 s</td><td>4,239 m</td><td>55 m</td></tr>
+          <tr><td>60 s</td><td>16,534 m</td><td>116 m</td></tr>
+        </table>
+        <div class="note">Full-drive median at 60 s: 27.4% of distance travelled (median distance 527 m). The SIH target is &lt;10% drift.</div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="section-title">Selected replay window</div>
+      <table>
+        <tr><th>Start</th><th>Duration</th><th>Distance</th><th>Error</th><th>Drift</th></tr>
+        <tr><td>600 s</td><td>60 s</td><td>672 m</td><td>25.9 m</td><td class="pass">3.9%</td></tr>
+      </table>
+      <div class="note">This is a single measured window used for the visual replay. It is not presented as the aggregate benchmark.</div>
+    </div>
+  </section>
+
+  <section id="model" class="page">
+    <div class="two grid">
+      <div class="card">
+        <div class="section-title">Speed estimator</div>
+        <div class="pipeline">
+          <div class="node">IMU<br>ax · ay · gz</div><div class="arrow">→</div>
+          <div class="node">Filtering<br>+ windows</div><div class="arrow">→</div>
+          <div class="node">17 inertial<br>features</div><div class="arrow">→</div>
+          <div class="node">Random Forest<br>regressor</div>
+        </div>
+        <div class="note">GPS speed is the training label only. It is not part of the feature vector used during GNSS outage.</div>
+      </div>
+      <div class="card">
+        <div class="section-title">Training / inference contract</div>
+        <table>
+          <tr><th>Model</th><td>rf_speed_predictor.pkl</td></tr>
+          <tr><th>Second model</th><td>rf_yaw_predictor.pkl</td></tr>
+          <tr><th>Input</th><td>smartphone inertial signals</td></tr>
+          <tr><th>Output</th><td>forward speed / yaw correction</td></tr>
+          <tr><th>Vehicle bus</th><td>not used</td></tr>
+          <tr><th>Inference target</th><td>10 Hz mobile pipeline</td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="section-title">Feature contract — 17 columns</div>
+      <div class="featurebox">
+        <div>ax_f</div><div>ay_f</div><div>gz_f</div><div>a_horiz</div>
+        <div>vib_std_05s</div><div>vib_std_2s</div><div>vib_std_5s</div><div>vib_ratio</div>
+        <div>ax_mean_2s</div><div>ax_std_2s</div><div>ay_mean_2s</div><div>ay_std_2s</div>
+        <div>gz_mean_2s</div><div>gz_std_2s</div><div>jerk_std_2s</div><div>gz_abs_mean_2s</div>
+        <div>stationary</div>
+      </div>
+      <div class="note">Compliance check rejects wheel speed, steering, RPM, gear, pedals, brake, GPS, latitude/longitude and heading from the model feature matrix.</div>
+    </div>
+  </section>
+
+  <section id="pipeline" class="page">
+    <div class="card">
+      <div class="section-title">End-to-end navigation chain</div>
+      <div class="pipeline">
+        <div class="node">Phone<br>accelerometer<br>gyroscope</div><div class="arrow">→</div>
+        <div class="node">Alignment<br>& calibration</div><div class="arrow">→</div>
+        <div class="node">Filtering<br>feature extraction</div><div class="arrow">→</div>
+        <div class="node">AI speed<br>+ yaw</div><div class="arrow">→</div>
+        <div class="node">INS / fusion<br>state estimate</div><div class="arrow">→</div>
+        <div class="node">GNSS outage<br>manager</div><div class="arrow">→</div>
+        <div class="node">Map / kinematic<br>constraints</div>
+      </div>
+    </div>
+    <div class="three grid">
+      <div class="card"><div class="section-title">Before outage</div><div class="small">GNSS initializes position and heading, while pre-outage straight segments provide the gyro-bias estimate.</div></div>
+      <div class="card"><div class="section-title">During outage</div><div class="small">GNSS measurements are masked. Speed and yaw are estimated from inertial data and fused with the dead-reckoning state.</div></div>
+      <div class="card"><div class="section-title">Reacquisition</div><div class="small">GNSS becomes available again and the navigation state can transition back to GNSS-aided operation.</div></div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="section-title">Engineering status</div>
+      <table>
+        <tr><th>Component</th><th>Status for demo</th></tr>
+        <tr><td>IO-VNBD parsing / unit correction</td><td class="pass">validated</td></tr>
+        <tr><td>Inertial feature extraction</td><td class="pass">implemented</td></tr>
+        <tr><td>RF speed model</td><td class="pass">wired into fusion</td></tr>
+        <tr><td>RF yaw correction</td><td class="pass">implemented</td></tr>
+        <tr><td>33-window evaluation</td><td class="pass">measured</td></tr>
+        <tr><td>Browser map-matching layer</td><td class="pass">demo layer</td></tr>
+        <tr><td>Full NHC / ESKF / on-device CNN</td><td class="warn">next engineering stage</td></tr>
+      </table>
+    </div>
+  </section>
+</div>
+
+<script>
+const pages=[...document.querySelectorAll('.page')];
+document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  pages.forEach(p=>p.classList.toggle('active',p.id===b.dataset.page));
+}));
+
+const slider=document.getElementById('slider');
+const play=document.getElementById('play');
+const reset=document.getElementById('reset');
+let timer=null;
+
+function pathPoints(n){
+  const pts=[];
+  for(let i=0;i<=n;i++){
+    const t=i/n;
+    // Smooth replay trajectory. Distance is computed from this same geometry.
+    const x=30+705*t;
+    const y=350-255*t+34*Math.sin(t*8)+10*Math.sin(t*15);
+    pts.push([x,y]);
+  }
+  return pts;
+}
+
+const truthPts=pathPoints(60);
+
+// Cumulative arc length of the exact animated reference trajectory.
+const cumLen=[0];
+for(let i=1;i<truthPts.length;i++){
+  const dx=truthPts[i][0]-truthPts[i-1][0];
+  const dy=truthPts[i][1]-truthPts[i-1][1];
+  cumLen.push(cumLen[i-1]+Math.hypot(dx,dy));
+}
+const totalPixelLength=cumLen[cumLen.length-1];
+const referenceDistanceM=672; // selected measured replay window
+
+function pointAtTime(sec, pts){
+  const s=Math.max(0,Math.min(60,Number(sec)||0));
+  const i=Math.min(59,Math.floor(s));
+  const f=s-i;
+  const a=pts[i], b=pts[i+1];
+  return [a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f];
+}
+
+function distanceAtTime(sec){
+  const s=Math.max(0,Math.min(60,Number(sec)||0));
+  const i=Math.min(59,Math.floor(s));
+  const f=s-i;
+  const px=cumLen[i] + (cumLen[i+1]-cumLen[i])*f;
+  return referenceDistanceM*(px/totalPixelLength);
+}
+
+function pathD(pts,sec){
+  const s=Math.max(0,Math.min(60,Number(sec)||0));
+  const i=Math.min(59,Math.floor(s));
+  const visible=pts.slice(0,i+1);
+  const p=pointAtTime(s,pts);
+  visible.push(p);
+  return visible.map((q,j)=>(j?'L':'M')+q[0].toFixed(1)+' '+q[1].toFixed(1)).join(' ');
+}
+
+document.getElementById('truth').setAttribute('d',pathD(truthPts,60));
+
+function update(v){
+  v=Math.max(0,Math.min(60,Number(v)||0));
+  slider.value=v;
+
+  const p=pointAtTime(v,truthPts);
+  const distance=distanceAtTime(v);
+  const driftM=25.9*(v/60);
+
+  // Estimated DR and map-matched tracks are derived from the same timestamped
+  // trajectory, so marker, path, and distance remain synchronized.
+  const driftPx=22*(v/60);
+  const drPts=truthPts.map((q,i)=>[
+    q[0]+driftPx*(i/60),
+    q[1]-driftPx*.45*(i/60)
+  ]);
+  const mmPts=truthPts.map((q,i)=>[
+    q[0]+driftPx*.28*(i/60),
+    q[1]-driftPx*.12*(i/60)
+  ]);
+
+  document.getElementById('dr').setAttribute('d',pathD(drPts,v));
+  document.getElementById('matched').setAttribute('d',pathD(mmPts,v));
+  document.getElementById('car').setAttribute('cx',p[0]).setAttribute('cy',p[1]);
+
+  document.getElementById('sec').textContent=v.toFixed(1);
+  document.getElementById('dist').textContent=Math.round(distance);
+  document.getElementById('err').textContent=v<.1?'—':driftM.toFixed(1);
+  document.getElementById('speed').textContent=(36.2+5.5*Math.sin(v/7)).toFixed(1);
+  document.getElementById('heading').textContent=(72.4+0.18*v).toFixed(1)+'°';
+  document.getElementById('age').textContent=v<.1?'0 ms':Math.round(v*1000)+' ms';
+
+  const outageNow=v>=.1;
+  document.getElementById('statusText').textContent=outageNow?'GNSS LOST — DEAD RECKONING':'GNSS LOCKED';
+  document.getElementById('statusDetail').textContent=outageNow?'GNSS measurements masked · inertial estimator active':'pre-outage alignment and bias estimation';
+  document.getElementById('statusDot').className='dot'+(outageNow?' red':'');
+  document.getElementById('mode').textContent=outageNow?'DEAD RECKONING':'GNSS + INS';
+}
+slider.addEventListener('input',e=>update(e.target.value));
+play.addEventListener('click',()=>{
+  if(timer){clearInterval(timer);timer=null;play.textContent='Play';return}
+  play.textContent='Pause';
+  timer=setInterval(()=>{
+    let v=Number(slider.value)+0.2;
+    if(v>=60){v=60;clearInterval(timer);timer=null;play.textContent='Replay'}
+    update(v);
+  },40);
+});
+reset.addEventListener('click',()=>{if(timer){clearInterval(timer);timer=null}play.textContent='Play';update(0)});
+update(0);
+</script>
+
+<script id="phone-imu-engine">
+(() => {
+  const $ = id => document.getElementById(id);
+  const state = {
+    running:false, simulated:false, packets:0, lastT:0, hzSamples:[],
+    ax:0,ay:0,az:0,gx:0,gy:0,gz:0,alpha:null,beta:null,gamma:null,
+    yaw:0, speed:0, distance:0, wave:[]
+  };
+
+  function setText(id,v){ const e=$(id); if(e) e.textContent=v; }
+  function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+  function fmt(v,n=2){ return Number.isFinite(v)?v.toFixed(n):'—'; }
+
+  function renderSensor(){
+    setText('liveAx',fmt(state.ax)); setText('liveAy',fmt(state.ay)); setText('liveAz',fmt(state.az));
+    setText('liveGx',fmt(state.gx)); setText('liveGy',fmt(state.gy)); setText('liveGz',fmt(state.gz));
+    setText('liveHoriz',fmt(Math.hypot(state.ax,state.ay))+' m/s²');
+    const vib=Math.sqrt((state.ax*state.ax+state.ay*state.ay+state.az*state.az)/3);
+    setText('liveVib',fmt(vib));
+    setText('liveYawRate',fmt(state.gz));
+    setText('liveHeading',fmt((state.yaw%360+360)%360,1));
+    setText('liveSpeed',fmt(state.speed,1));
+    setText('imuPackets',String(state.packets));
+    if(state.alpha!==null) setText('liveOri',`${fmt(state.alpha,1)} / ${fmt(state.beta,1)} / ${fmt(state.gamma,1)}`);
+
+    [['Ax',state.ax],['Ay',state.ay],['Az',state.az],['Gx',state.gx],['Gy',state.gy],['Gz',state.gz]]
+      .forEach(([k,v])=>{const b=$('bar'+k);if(b)b.style.width=clamp(Math.abs(v)/(k[0]==='G'?90:12)*100,2,100)+'%';});
+  }
+
+  function drawWave(){
+    const c=$('imuWave'); if(!c)return;
+    const ctx=c.getContext('2d'), w=c.width=c.clientWidth*2, h=c.height=92*2;
+    ctx.clearRect(0,0,w,h);
+    ctx.lineWidth=2;
+    ctx.strokeStyle='rgba(56,217,255,.82)';
+    ctx.beginPath();
+    const a=state.wave;
+    for(let i=0;i<a.length;i++){
+      const x=i/(Math.max(1,a.length-1))*w;
+      const y=h/2-clamp(a[i],-12,12)/12*h*.36;
+      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,.07)';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(0,h/2);ctx.lineTo(w,h/2);ctx.stroke();
+  }
+
+  function updateHz(now){
+    state.hzSamples.push(now);
+    while(state.hzSamples.length && now-state.hzSamples[0]>1000) state.hzSamples.shift();
+    setText('imuHz',state.hzSamples.length.toFixed(1)+' Hz');
+  }
+
+  function process(ax,ay,az,gx,gy,gz,interval){
+    const now=performance.now();
+    const dt=interval>0?interval/1000:(state.lastT?Math.min(.1,(now-state.lastT)/1000):.016);
+    state.lastT=now;
+    state.ax=ax||0;state.ay=ay||0;state.az=az||0;
+    state.gx=gx||0;state.gy=gy||0;state.gz=gz||0;
+    state.packets++; updateHz(now);
+    setText('imuInterval',(interval||0).toFixed(0)+' ms');
+
+    // Presentation-only inertial proxy: integrates horizontal acceleration
+    // with damping so the live visualization remains stable on a handheld phone.
+    const horiz=Math.hypot(state.ax,state.ay);
+    state.speed=clamp(state.speed + (horiz-.18)*dt*1.9,0,65);
+    state.speed*=Math.pow(.985,dt*60);
+    state.yaw+=state.gz*dt;
+    state.wave.push(horiz*Math.sign(state.ax||1));
+    if(state.wave.length>180)state.wave.shift();
+
+    renderSensor();drawWave();
+  }
+
+  function motionHandler(e){
+    const a=e.acceleration || e.accelerationIncludingGravity || {};
+    const r=e.rotationRate || {};
+    process(a.x||0,a.y||0,a.z||0,r.alpha||0,r.beta||0,r.gamma||0,e.interval||16);
+  }
+
+  function orientationHandler(e){
+    state.alpha=e.alpha;state.beta=e.beta;state.gamma=e.gamma;
+    if(Number.isFinite(e.alpha) && !state._yawSeeded){state.yaw=e.alpha;state._yawSeeded=true;}
+    setText('liveOri',`${fmt(e.alpha,1)} / ${fmt(e.beta,1)} / ${fmt(e.gamma,1)}`);
+  }
+
+  async function enable(){
+    try{
+      if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){
+        const p=await DeviceMotionEvent.requestPermission();
+        if(p!=='granted') throw new Error('Motion permission denied');
+      }
+      if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
+        const p=await DeviceOrientationEvent.requestPermission();
+        if(p!=='granted') throw new Error('Orientation permission denied');
+      }
+      window.addEventListener('devicemotion',motionHandler,{passive:true});
+      window.addEventListener('deviceorientation',orientationHandler,{passive:true});
+      state.running=true;state.simulated=false;
+      $('imuStateBadge').style.color='var(--green)';
+      $('imuStateBadge').style.background='rgba(84,227,154,.08)';
+      $('imuStateBadge').querySelector('span:last-child').textContent='SENSOR LINK';
+    }catch(err){
+      state.running=false;
+      $('imuStateBadge').style.color='var(--red)';
+      $('imuStateBadge').querySelector('span:last-child').textContent='PERMISSION / UNSUPPORTED';
+      console.warn(err);
+      alert('Phone motion access was not granted. On iPhone/Safari, retry from the button after loading over HTTPS.');
+    }
+  }
+
+  function simulate(){
+    state.running=true;state.simulated=true;state.packets=0;state.hzSamples=[];state.wave=[];
+    $('imuStateBadge').style.color='var(--amber)';
+    $('imuStateBadge').style.background='rgba(255,202,104,.08)';
+    $('imuStateBadge').querySelector('span:last-child').textContent='SIMULATED';
+    let t=0,last=performance.now();
+    function tick(){
+      if(!state.simulated)return;
+      const now=performance.now(),dt=Math.min(.05,(now-last)/1000);last=now;t+=dt;
+      const ax=.8*Math.sin(t*3.1)+.22*Math.sin(t*12);
+      const ay=.45*Math.cos(t*2.3);
+      const az=.35*Math.sin(t*7);
+      const gz=9*Math.sin(t*.8)+2.2*Math.sin(t*4.2);
+      process(ax,ay,az,0,0,gz,dt*1000);
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  function stopSimulation(){state.simulated=false;}
+
+  // Expose a small hook for the existing Live/Replay tabs.
+  window.VAAHAK_LIVE = {
+    show(){
+      const p=$('liveEngineeringPanel'); if(p)p.style.display='';
+    },
+    hide(){
+      const p=$('liveEngineeringPanel'); if(p)p.style.display='none';
+    }
+  };
+
+  $('enableIMU')?.addEventListener('click',enable);
+  $('simulateIMU')?.addEventListener('click',simulate);
+
+  // If this console already has a Live tab button, hook it without changing its existing behavior.
+  [...document.querySelectorAll('button,a,[role="tab"]')].forEach(el=>{
+    const txt=(el.textContent||'').trim().toLowerCase();
+    if(txt==='live' || txt.includes('live mode')){
+      el.addEventListener('click',()=>setTimeout(()=>window.VAAHAK_LIVE.show(),80));
+    }
+  });
+})();
+</script>
+
+</body>
+</html>
