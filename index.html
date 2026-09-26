@@ -164,6 +164,7 @@ body{
 @media(max-width:900px){
  .live-grid{grid-template-columns:1fr}.sensor-grid{grid-template-columns:repeat(2,1fr)}
 }
+#live.active{display:grid}
 </style>
 
 </head>
@@ -176,6 +177,7 @@ body{
   </div>
 
   <div class="tabs">
+    <button class="tab" data-page="live">Live Sensor</button>
     <button class="tab active" data-page="replay">Replay</button>
     <button class="tab" data-page="results">Results</button>
     <button class="tab" data-page="model">Model</button>
@@ -183,7 +185,7 @@ body{
   </div>
 
   
-<section id="liveEngineeringPanel" class="live-grid" style="display:none">
+<section id="live" class="page live-grid">
   <div class="panel" style="padding:15px">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px">
       <div>
@@ -247,7 +249,39 @@ body{
       <div class="sensor-card"><div class="tag">Yaw rate</div><div class="value"><span id="liveYawRate">0.0</span><span class="unit">°/s</span></div></div>
     </div>
 
-    <div class="sensor-card" style="margin-top:10px">
+    
+<div class="sensor-card" style="margin-top:10px;padding:10px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px">
+    <div>
+      <div class="tag">LIVE MAP-CONSTRAINED TRACK</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:3px">Raw inertial path → nearest-road projection</div>
+    </div>
+    <div id="mapMatchState" class="live-badge" style="color:var(--amber);background:rgba(255,202,104,.08);border:1px solid rgba(255,202,104,.2)">DEMO MATCH</div>
+  </div>
+  <svg id="liveMap" viewBox="0 0 640 300" style="width:100%;height:250px;border-radius:12px;background:#07101a;border:1px solid #1b2a3c">
+    <defs>
+      <filter id="liveGlow"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    </defs>
+    <g stroke="#1a2938" stroke-width="1" opacity=".8">
+      <path d="M0 55H640M0 110H640M0 165H640M0 220H640M0 275H640"/>
+      <path d="M70 0V300M150 0V300M230 0V300M310 0V300M390 0V300M470 0V300M550 0V300"/>
+    </g>
+    <path id="road1" d="M20 245 C130 210 155 90 260 75 S410 170 500 120 S575 65 625 45" fill="none" stroke="#34465b" stroke-width="30" stroke-linecap="round"/>
+    <path id="road1center" d="M20 245 C130 210 155 90 260 75 S410 170 500 120 S575 65 625 45" fill="none" stroke="#61748a" stroke-width="2" stroke-dasharray="8 8" opacity=".7"/>
+    <path id="liveRawPath" d="" fill="none" stroke="#38d9ff" stroke-width="2.5" opacity=".9" filter="url(#liveGlow)"/>
+    <path id="liveMatchedPath" d="" fill="none" stroke="#ffca68" stroke-width="4" opacity=".95"/>
+    <circle id="liveRawDot" cx="20" cy="245" r="4" fill="#38d9ff"/>
+    <circle id="liveMatchDot" cx="20" cy="245" r="7" fill="#ffca68" stroke="#fff" stroke-width="1"/>
+  </svg>
+  <div class="map-legend">
+    <span><i class="legend-dot" style="background:#38d9ff"></i>raw inertial</span>
+    <span><i class="legend-dot" style="background:#ffca68"></i>road-constrained</span>
+    <span><i class="legend-dot" style="background:#61748a"></i>road centerline</span>
+  </div>
+  <div class="demo-disclosure">Live sensor values are genuine browser IMU readings when enabled. The yellow road projection is a presentation/demo map-matching layer; benchmark map-matching claims come from the offline pipeline.</div>
+</div>
+
+<div class="sensor-card" style="margin-top:10px">
       <div class="tag">Map-constrained visualization</div>
       <div style="font-size:12px;line-height:1.5;margin-top:7px;color:#b9c7d8">
         Live inertial motion is projected onto the presentation route. The road-snapping layer is a
@@ -539,156 +573,200 @@ update(0);
 
 <script id="phone-imu-engine">
 (() => {
-  const $ = id => document.getElementById(id);
-  const state = {
-    running:false, simulated:false, packets:0, lastT:0, hzSamples:[],
+  const $=id=>document.getElementById(id);
+  const state={
+    running:false,simulated:false,packets:0,lastT:0,hzSamples:[],
     ax:0,ay:0,az:0,gx:0,gy:0,gz:0,alpha:null,beta:null,gamma:null,
-    yaw:0, speed:0, distance:0, wave:[]
+    yaw:0,speed:0,wave:[],rawPath:[],matchedPath:[],lastMapT:0,
+    sensorEvents:0
   };
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const fmt=(v,n=2)=>Number.isFinite(v)?v.toFixed(n):'—';
+  const set=(id,v)=>{const e=$(id);if(e)e.textContent=v;};
 
-  function setText(id,v){ const e=$(id); if(e) e.textContent=v; }
-  function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
-  function fmt(v,n=2){ return Number.isFinite(v)?v.toFixed(n):'—'; }
+  // Presentation route used by the live map-constrained visualization.
+  const road=[];
+  for(let i=0;i<=180;i++){
+    const t=i/180;
+    let x,y;
+    if(t<.28){
+      const q=t/.28;x=20+240*q;y=245-170*(q*q)+12*Math.sin(q*Math.PI);
+    }else if(t<.58){
+      const q=(t-.28)/.30;x=260+150*q;y=75+85*Math.sin(q*Math.PI*.9);
+    }else if(t<.82){
+      const q=(t-.58)/.24;x=410+145*q;y=160-40*q-5*Math.sin(q*Math.PI);
+    }else{
+      const q=(t-.82)/.18;x=555+70*q;y=110-65*q;
+    }
+    road.push([x,y]);
+  }
 
-  function renderSensor(){
-    setText('liveAx',fmt(state.ax)); setText('liveAy',fmt(state.ay)); setText('liveAz',fmt(state.az));
-    setText('liveGx',fmt(state.gx)); setText('liveGy',fmt(state.gy)); setText('liveGz',fmt(state.gz));
-    setText('liveHoriz',fmt(Math.hypot(state.ax,state.ay))+' m/s²');
-    const vib=Math.sqrt((state.ax*state.ax+state.ay*state.ay+state.az*state.az)/3);
-    setText('liveVib',fmt(vib));
-    setText('liveYawRate',fmt(state.gz));
-    setText('liveHeading',fmt((state.yaw%360+360)%360,1));
-    setText('liveSpeed',fmt(state.speed,1));
-    setText('imuPackets',String(state.packets));
-    if(state.alpha!==null) setText('liveOri',`${fmt(state.alpha,1)} / ${fmt(state.beta,1)} / ${fmt(state.gamma,1)}`);
+  function nearestRoad(pt){
+    let best=road[0],bd=Infinity;
+    for(let i=1;i<road.length;i++){
+      const a=road[i-1],b=road[i],vx=b[0]-a[0],vy=b[1]-a[1];
+      const l2=vx*vx+vy*vy||1;
+      const u=clamp(((pt[0]-a[0])*vx+(pt[1]-a[1])*vy)/l2,0,1);
+      const q=[a[0]+u*vx,a[1]+u*vy],d=Math.hypot(pt[0]-q[0],pt[1]-q[1]);
+      if(d<bd){bd=d;best=q;}
+    }
+    return best;
+  }
 
-    [['Ax',state.ax],['Ay',state.ay],['Az',state.az],['Gx',state.gx],['Gy',state.gy],['Gz',state.gz]]
-      .forEach(([k,v])=>{const b=$('bar'+k);if(b)b.style.width=clamp(Math.abs(v)/(k[0]==='G'?90:12)*100,2,100)+'%';});
+  function mapStep(dt){
+    // Stable visualization: inertial magnitude controls forward progress,
+    // yaw rate bends the raw track; then nearest-road projection produces
+    // the yellow constrained estimate.
+    if(!state.rawPath.length){
+      state.rawPath=[[20,245]];state.matchedPath=[[20,245]];return;
+    }
+    const prev=state.rawPath[state.rawPath.length-1];
+    const speedPx=Math.max(.15,state.speed/36.0)*dt*10;
+    const heading=(state.yaw*Math.PI/180);
+    let nx=prev[0]+Math.cos(heading-.55)*speedPx;
+    let ny=prev[1]-Math.sin(heading-.55)*speedPx;
+    nx=clamp(nx,10,630);ny=clamp(ny,20,285);
+    const raw=[nx,ny],match=nearestRoad(raw);
+    state.rawPath.push(raw);state.matchedPath.push(match);
+    if(state.rawPath.length>260){state.rawPath.shift();state.matchedPath.shift();}
+    const d=(arr)=>arr.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+    if($('liveRawPath'))$('liveRawPath').setAttribute('d',d(state.rawPath));
+    if($('liveMatchedPath'))$('liveMatchedPath').setAttribute('d',d(state.matchedPath));
+    const r=state.rawPath[state.rawPath.length-1],m=state.matchedPath[state.matchedPath.length-1];
+    $('liveRawDot')?.setAttribute('cx',r[0]);$('liveRawDot')?.setAttribute('cy',r[1]);
+    $('liveMatchDot')?.setAttribute('cx',m[0]);$('liveMatchDot')?.setAttribute('cy',m[1]);
   }
 
   function drawWave(){
-    const c=$('imuWave'); if(!c)return;
-    const ctx=c.getContext('2d'), w=c.width=c.clientWidth*2, h=c.height=92*2;
-    ctx.clearRect(0,0,w,h);
-    ctx.lineWidth=2;
-    ctx.strokeStyle='rgba(56,217,255,.82)';
-    ctx.beginPath();
-    const a=state.wave;
-    for(let i=0;i<a.length;i++){
-      const x=i/(Math.max(1,a.length-1))*w;
-      const y=h/2-clamp(a[i],-12,12)/12*h*.36;
-      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
-    }
-    ctx.stroke();
-    ctx.strokeStyle='rgba(255,255,255,.07)';ctx.lineWidth=1;
-    ctx.beginPath();ctx.moveTo(0,h/2);ctx.lineTo(w,h/2);ctx.stroke();
+    const c=$('imuWave');if(!c)return;
+    const w=c.clientWidth*2,h=184;c.width=w;c.height=h;
+    const ctx=c.getContext('2d');ctx.clearRect(0,0,w,h);
+    ctx.strokeStyle='rgba(56,217,255,.85)';ctx.lineWidth=3;ctx.beginPath();
+    state.wave.forEach((v,i)=>{
+      const x=i/Math.max(1,state.wave.length-1)*w;
+      const y=h/2-clamp(v,-12,12)/12*h*.36;
+      i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+    });ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,.08)';ctx.lineWidth=1;ctx.beginPath();
+    ctx.moveTo(0,h/2);ctx.lineTo(w,h/2);ctx.stroke();
   }
 
-  function updateHz(now){
+  function render(){
+    set('liveAx',fmt(state.ax));set('liveAy',fmt(state.ay));set('liveAz',fmt(state.az));
+    set('liveGx',fmt(state.gx));set('liveGy',fmt(state.gy));set('liveGz',fmt(state.gz));
+    set('liveHoriz',fmt(Math.hypot(state.ax,state.ay))+' m/s²');
+    set('liveVib',fmt(Math.sqrt((state.ax**2+state.ay**2+state.az**2)/3)));
+    set('liveYawRate',fmt(state.gz));
+    set('liveHeading',fmt((state.yaw%360+360)%360,1));
+    set('liveSpeed',fmt(state.speed,1));
+    set('imuPackets',String(state.packets));
+    if(state.alpha!==null)set('liveOri',`${fmt(state.alpha,1)} / ${fmt(state.beta,1)} / ${fmt(state.gamma,1)}`);
+    if(state.lastT)set('imuInterval',fmt(state._interval||0,0)+' ms');
+    const hz=state.hzSamples.length;
+    set('imuHz',hz.toFixed(1)+' Hz');
+    [['Ax',state.ax,12],['Ay',state.ay,12],['Az',state.az,12],['Gx',state.gx,90],['Gy',state.gy,90],['Gz',state.gz,90]]
+      .forEach(([k,v,s])=>{const b=$('bar'+k);if(b)b.style.width=clamp(Math.abs(v)/s*100,2,100)+'%';});
+    drawWave();
+  }
+
+  function hz(now){
     state.hzSamples.push(now);
-    while(state.hzSamples.length && now-state.hzSamples[0]>1000) state.hzSamples.shift();
-    setText('imuHz',state.hzSamples.length.toFixed(1)+' Hz');
+    while(state.hzSamples.length&&now-state.hzSamples[0]>1000)state.hzSamples.shift();
   }
 
   function process(ax,ay,az,gx,gy,gz,interval){
     const now=performance.now();
-    const dt=interval>0?interval/1000:(state.lastT?Math.min(.1,(now-state.lastT)/1000):.016);
-    state.lastT=now;
-    state.ax=ax||0;state.ay=ay||0;state.az=az||0;
-    state.gx=gx||0;state.gy=gy||0;state.gz=gz||0;
-    state.packets++; updateHz(now);
-    setText('imuInterval',(interval||0).toFixed(0)+' ms');
+    const dt=state.lastT?Math.min(.08,(now-state.lastT)/1000):Math.min(.05,(interval||16)/1000);
+    state.lastT=now;state._interval=interval||dt*1000;
+    state.ax=Number.isFinite(ax)?ax:0;state.ay=Number.isFinite(ay)?ay:0;state.az=Number.isFinite(az)?az:0;
+    state.gx=Number.isFinite(gx)?gx:0;state.gy=Number.isFinite(gy)?gy:0;state.gz=Number.isFinite(gz)?gz:0;
+    state.packets++;state.sensorEvents++;hz(now);
 
-    // Presentation-only inertial proxy: integrates horizontal acceleration
-    // with damping so the live visualization remains stable on a handheld phone.
     const horiz=Math.hypot(state.ax,state.ay);
-    state.speed=clamp(state.speed + (horiz-.18)*dt*1.9,0,65);
-    state.speed*=Math.pow(.985,dt*60);
+    state.speed=clamp(state.speed+(horiz-.12)*dt*2.2,0,70)*Math.pow(.992,dt*60);
     state.yaw+=state.gz*dt;
     state.wave.push(horiz*Math.sign(state.ax||1));
     if(state.wave.length>180)state.wave.shift();
-
-    renderSensor();drawWave();
+    mapStep(dt);render();
   }
 
-  function motionHandler(e){
-    const a=e.acceleration || e.accelerationIncludingGravity || {};
-    const r=e.rotationRate || {};
-    process(a.x||0,a.y||0,a.z||0,r.alpha||0,r.beta||0,r.gamma||0,e.interval||16);
+  function motion(e){
+    // Some phones expose accelerationIncludingGravity but not acceleration.
+    const a=e.acceleration;
+    const ag=e.accelerationIncludingGravity;
+    const x=(a&&Number.isFinite(a.x))?a.x:((ag&&Number.isFinite(ag.x))?ag.x:0);
+    const y=(a&&Number.isFinite(a.y))?a.y:((ag&&Number.isFinite(ag.y))?ag.y:0);
+    const z=(a&&Number.isFinite(a.z))?a.z:((ag&&Number.isFinite(ag.z))?ag.z:0);
+    const r=e.rotationRate||{};
+    process(x,y,z,
+      Number.isFinite(r.alpha)?r.alpha:0,
+      Number.isFinite(r.beta)?r.beta:0,
+      Number.isFinite(r.gamma)?r.gamma:0,
+      Number(e.interval)||16);
   }
 
-  function orientationHandler(e){
+  function orientation(e){
     state.alpha=e.alpha;state.beta=e.beta;state.gamma=e.gamma;
-    if(Number.isFinite(e.alpha) && !state._yawSeeded){state.yaw=e.alpha;state._yawSeeded=true;}
-    setText('liveOri',`${fmt(e.alpha,1)} / ${fmt(e.beta,1)} / ${fmt(e.gamma,1)}`);
+    if(Number.isFinite(e.alpha)&&!state._yawSeeded){state.yaw=e.alpha;state._yawSeeded=true;}
+    set('liveOri',`${fmt(e.alpha,1)} / ${fmt(e.beta,1)} / ${fmt(e.gamma,1)}`);
   }
 
   async function enable(){
     try{
+      // Must happen inside the button click for browsers that require transient activation.
       if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){
-        const p=await DeviceMotionEvent.requestPermission();
-        if(p!=='granted') throw new Error('Motion permission denied');
+        const pm=await DeviceMotionEvent.requestPermission();
+        if(pm!=='granted')throw new Error('motion permission: '+pm);
       }
       if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
-        const p=await DeviceOrientationEvent.requestPermission();
-        if(p!=='granted') throw new Error('Orientation permission denied');
+        const po=await DeviceOrientationEvent.requestPermission();
+        if(po!=='granted')throw new Error('orientation permission: '+po);
       }
-      window.addEventListener('devicemotion',motionHandler,{passive:true});
-      window.addEventListener('deviceorientation',orientationHandler,{passive:true});
+      window.addEventListener('devicemotion',motion,{passive:true});
+      window.addEventListener('deviceorientation',orientation,{passive:true});
       state.running=true;state.simulated=false;
       $('imuStateBadge').style.color='var(--green)';
-      $('imuStateBadge').style.background='rgba(84,227,154,.08)';
       $('imuStateBadge').querySelector('span:last-child').textContent='SENSOR LINK';
+      $('mapMatchState').textContent='LIVE PROJECTION';
+      $('mapMatchState').style.color='var(--green)';
+      $('mapMatchState').style.background='rgba(84,227,154,.08)';
+      $('mapMatchState').style.borderColor='rgba(84,227,154,.2)';
+      // Detect unsupported/no-event cases instead of silently staying at zero.
+      setTimeout(()=>{
+        if(state.sensorEvents===0){
+          $('imuStateBadge').style.color='var(--red)';
+          $('imuStateBadge').querySelector('span:last-child').textContent='NO SENSOR EVENTS';
+        }
+      },1800);
     }catch(err){
-      state.running=false;
-      $('imuStateBadge').style.color='var(--red)';
-      $('imuStateBadge').querySelector('span:last-child').textContent='PERMISSION / UNSUPPORTED';
       console.warn(err);
-      alert('Phone motion access was not granted. On iPhone/Safari, retry from the button after loading over HTTPS.');
+      $('imuStateBadge').style.color='var(--red)';
+      $('imuStateBadge').querySelector('span:last-child').textContent='PERMISSION DENIED';
+      alert('Motion access was not granted. Open the site over HTTPS and tap ENABLE PHONE IMU again.');
     }
   }
 
   function simulate(){
     state.running=true;state.simulated=true;state.packets=0;state.hzSamples=[];state.wave=[];
+    state.rawPath=[[20,245]];state.matchedPath=[[20,245]];state.speed=28;state.yaw=12;
     $('imuStateBadge').style.color='var(--amber)';
-    $('imuStateBadge').style.background='rgba(255,202,104,.08)';
-    $('imuStateBadge').querySelector('span:last-child').textContent='SIMULATED';
+    $('imuStateBadge').querySelector('span:last-child').textContent='SIMULATED SENSOR';
+    $('mapMatchState').textContent='SIMULATED MATCH';
     let t=0,last=performance.now();
-    function tick(){
+    const tick=()=>{
       if(!state.simulated)return;
       const now=performance.now(),dt=Math.min(.05,(now-last)/1000);last=now;t+=dt;
-      const ax=.8*Math.sin(t*3.1)+.22*Math.sin(t*12);
-      const ay=.45*Math.cos(t*2.3);
-      const az=.35*Math.sin(t*7);
-      const gz=9*Math.sin(t*.8)+2.2*Math.sin(t*4.2);
-      process(ax,ay,az,0,0,gz,dt*1000);
+      process(.9*Math.sin(t*3.1)+.18*Math.sin(t*15),
+              .5*Math.cos(t*2.1),.3*Math.sin(t*7),
+              0,0,8*Math.sin(t*.7)+2*Math.sin(t*4),dt*1000);
       requestAnimationFrame(tick);
-    }
+    };
     requestAnimationFrame(tick);
   }
 
-  function stopSimulation(){state.simulated=false;}
-
-  // Expose a small hook for the existing Live/Replay tabs.
-  window.VAAHAK_LIVE = {
-    show(){
-      const p=$('liveEngineeringPanel'); if(p)p.style.display='';
-    },
-    hide(){
-      const p=$('liveEngineeringPanel'); if(p)p.style.display='none';
-    }
-  };
-
+  window.VAAHAK_LIVE={show:()=>{},hide:()=>{}};
   $('enableIMU')?.addEventListener('click',enable);
   $('simulateIMU')?.addEventListener('click',simulate);
-
-  // If this console already has a Live tab button, hook it without changing its existing behavior.
-  [...document.querySelectorAll('button,a,[role="tab"]')].forEach(el=>{
-    const txt=(el.textContent||'').trim().toLowerCase();
-    if(txt==='live' || txt.includes('live mode')){
-      el.addEventListener('click',()=>setTimeout(()=>window.VAAHAK_LIVE.show(),80));
-    }
-  });
 })();
 </script>
 
