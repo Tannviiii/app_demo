@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>VAAHAK — Intelligent Dead Reckoning</title>
+<style>
+  :root{
+    --bg:#070B16; --panel:#0F1626; --card:#151E33; 
+    --line:#243250; --ink:#EDF2FB; --muted:#8494B0;
+    --teal:#19C2CE; --red:#FF5C5C; --green:#2FD07E; --amber:#FFC24B; --navy:#2C4A80;
+    box-sizing:border-box;
+    padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+  }
+  *,*::before,*::after{box-sizing:inherit}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--ink);
+    font-family:"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+    display:flex;align-items:center;justify-content:center;padding:12px}
+  .app{width:100%;max-width:440px;height:min(92vh,900px);background:var(--panel);
+    border-radius:24px;overflow:hidden;display:flex;flex-direction:column;
+    border:1px solid var(--line);box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  header{padding:11px 16px;display:flex;align-items:center;gap:10px;
+    border-bottom:1px solid var(--line);background:#0B1220}
+  .brand{font-weight:800;letter-spacing:.14em;font-size:13px}
+  .brand span{color:var(--teal)}
+  .tabs{margin-left:auto;display:flex;gap:4px;background:#0A101E;border-radius:9px;padding:3px}
+  .tab{padding:6px 11px;border-radius:7px;font-size:11.5px;font-weight:600;
+    color:var(--muted);cursor:pointer;border:none;background:none;font-family:inherit}
+  .tab.on{background:var(--teal);color:#04262A}
+  .status{display:flex;align-items:center;gap:9px;padding:11px 16px;font-size:13px;
+    font-weight:700;background:var(--green);color:#052A14;transition:background .35s,color .35s}
+  .status.lost{background:var(--red);color:#2B0606}
+  .status.idle{background:#2A3550;color:var(--muted)}
+  .dot{width:9px;height:9px;border-radius:50%;background:currentColor;animation:p 1.3s infinite}
+  @keyframes p{0%,100%{opacity:1}50%{opacity:.25}}
+  .age{margin-left:auto;font-variant-numeric:tabular-nums}
+  .map{position:relative;flex:1;background:#0A1120;overflow:hidden;min-height:180px}
+  svg{width:100%;height:100%;display:block}
+  .hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    text-align:center;padding:26px;color:var(--muted);font-size:13px;line-height:1.65}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line)}
+  .cell{padding:11px 8px;text-align:center;border-right:1px solid var(--line)}
+  .cell:last-child{border-right:none}
+  .k{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+  .v{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.05}
+  .u{font-size:9.5px;color:var(--muted);margin-top:2px}
+  .diag{padding:9px 14px;border-top:1px solid var(--line);background:#0B1220;
+    font-size:10.5px;color:var(--muted);line-height:1.75;max-height:104px;overflow-y:auto}
+  .diag b{color:var(--ink);font-weight:600}
+  .ctl{display:flex;gap:8px;padding:11px 12px;border-top:1px solid var(--line);background:#0B1220}
+  button.act{flex:1;padding:12px;border-radius:11px;border:1px solid var(--line);
+    background:#1A2540;color:var(--ink);font-size:13px;font-weight:700;font-family:inherit;cursor:pointer}
+  button.act.primary{background:var(--teal);border-color:var(--teal);color:#04262A}
+  button.act.danger{background:var(--red);border-color:var(--red);color:#fff}
+  button.act:disabled{opacity:.35}
+  .legend{position:absolute;left:11px;bottom:11px;font-size:10.5px;background:rgba(7,11,22,.86);
+    padding:7px 9px;border-radius:8px;border:1px solid var(--line);line-height:1.75}
+  .sw{display:inline-block;width:15px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">VAA<span>HAK</span></div>
+    <div class="tabs">
+      <button class="tab on" id="tabLive">Live</button>
+      <button class="tab" id="tabReplay">Replay</button>
+    </div>
+  </header>
+
+  <div class="status idle" id="status">
+    <span class="dot"></span><span id="stText">Not started</span>
+    <span class="age" id="age"></span>
+  </div>
+
+  <div class="map">
+    <svg id="svg" viewBox="0 0 400 520" preserveAspectRatio="xMidYMid meet">
+      <path id="trTruth" fill="none" stroke="#19C2CE" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <path id="trPred"  fill="none" stroke="#FF5C5C" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <line id="gap" stroke="#FFC24B" stroke-width="1.5" stroke-dasharray="4 3" opacity="0"/>
+      <g id="car"><circle r="7.5" fill="#19C2CE" stroke="#070B16" stroke-width="3"/></g>
+    </svg>
+    <div class="hint" id="hint">Tap <b>Start</b>, allow motion and location,<br>then drive or walk.<br><br>
+      When you tap <b>Cut GNSS</b> the app stops using satellites<br>and tracks you from the phone's sensors alone.</div>
+    <div class="legend" style="display:none" id="legend">
+      <div><span class="sw" style="background:#19C2CE"></span>GNSS position</div>
+      <div><span class="sw" style="background:#FF5C5C"></span>inertial estimate</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="cell"><div class="k">Speed</div><div class="v" id="mSpd">—</div><div class="u">km/h</div></div>
+    <div class="cell"><div class="k">Distance</div><div class="v" id="mDist">0</div><div class="u">metres</div></div>
+    <div class="cell"><div class="k">Error</div><div class="v" id="mErr">—</div><div class="u">metres</div></div>
+  </div>
+
+  <div class="diag" id="diag">Engine idle.</div>
+
+  <div class="ctl">
+    <button class="act primary" id="bStart">Start</button>
+    <button class="act danger" id="bCut" disabled>Cut GNSS</button>
+    <button class="act" id="bReset">Reset</button>
+  </div>
+</div>
+<script>
+/* ===========================================================================
+   VAAHAK engine — runs live on the phone's own sensors.
+
+   The chain, in order:
+     raw accel + gyro  ->  gravity tracked by low-pass  ->  vehicle frame solved
+     from data  ->  heading from bias-corrected yaw rate  ->  speed from an
+     online-calibrated vibration model  ->  dead reckoning by speed x heading.
+
+   The speed model is calibrated ON THE FLY while GNSS is healthy: it fits
+   vibration energy against GNSS speed for this vehicle, this phone, this mount.
+   When GNSS is cut, that fit is frozen and used. This is why it needs no
+   pre-trained network and adapts to any vehicle.
+   =========================================================================== */
+const $ = id => document.getElementById(id);
+const R_E = 6371000, G = 9.80665;
+
+const S = {
+  running:false, cut:false, t0:0, tCut:0,
+  lat0:null, lon0:null,
+  grav:[0,0,G], up:[0,0,1], fwd:null,
+  yawBias:0, yawBiasN:0, psi:0, psiInit:false,
+  v:0, px:0, py:0, dist:0,
+  truth:[], pred:[], lastT:null,
+  vib:0, vibLP:0, calX:[], calY:[], calA:0, calB:0, calN:0,
+  lastFixT:0, lastFix:null, stationary:false,
+  sensors:[], watchId:null, err:0
+};
+
+const log = m => { $('diag').innerHTML = m; };
+
+/* ---------- small helpers ---------- */
+const norm = v => { const n=Math.hypot(v[0],v[1],v[2])||1; return [v[0]/n,v[1]/n,v[2]/n]; };
+const dot  = (a,b) => a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const cross= (a,b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+const toXY = (la,lo) => [ (lo-S.lon0)*Math.PI/180*R_E*Math.cos(S.lat0*Math.PI/180),
+                          (la-S.lat0)*Math.PI/180*R_E ];
+
+/* ---------- sensors ---------- */
+function startSensors(){
+  const notes=[];
+  notes.push('secure context: '+(window.isSecureContext?'yes':'NO (sensors need https)'));
+  notes.push('in iframe: '+(window.self!==window.top?'YES — sensors are usually blocked here':'no'));
+  if('Accelerometer' in window && 'Gyroscope' in window){
+    try{
+      const acc=new Accelerometer({frequency:50});
+      acc.addEventListener('reading',()=>onAccel(acc.timestamp/1000,[acc.x,acc.y,acc.z]));
+      acc.start(); S.sensors.push(acc);
+      const gyr=new Gyroscope({frequency:50});
+      gyr.addEventListener('reading',()=>onGyro(gyr.timestamp/1000,[gyr.x,gyr.y,gyr.z]));
+      gyr.start(); S.sensors.push(gyr);
+      S.api='Generic Sensor API @50Hz';
+      notes.push('Generic Sensor API: started');
+    }catch(e){ S.api='sensor error: '+e.message; notes.push('Generic Sensor FAILED: '+e.name+' '+e.message); }
+  } else if('DeviceMotionEvent' in window){
+    const go=()=>{ window.addEventListener('devicemotion',ev=>{
+        const t=ev.timeStamp/1000, a=ev.accelerationIncludingGravity, r=ev.rotationRate;
+        if(a&&a.x!==null) onAccel(t,[a.x,a.y,a.z]);
+        if(r&&r.alpha!==null) onGyro(t,[r.beta*Math.PI/180,r.gamma*Math.PI/180,r.alpha*Math.PI/180]);
+      }); S.api='DeviceMotion (fallback)'; };
+    if(typeof DeviceMotionEvent.requestPermission==='function')
+      DeviceMotionEvent.requestPermission().then(s=>s==='granted'?go():log('Motion permission denied.'));
+    else go();
+  } else { log('No motion sensors available in this browser.'); }
+
+  if('geolocation' in navigator){
+    S.watchId=navigator.geolocation.watchPosition(onFix,
+      e=>{S.gnssErr=e.message; showNotes();},
+      {enableHighAccuracy:true,maximumAge:0,timeout:30000});
+    notes.push('geolocation: requested');
+  } else notes.push('geolocation: NOT AVAILABLE');
+  S.notes=notes; showNotes();
+  // if nothing arrives in 4 s, say so plainly instead of sitting blank
+  setTimeout(()=>{ if(S.nAcc===0||S.nGyro===0) showNotes(); }, 4000);
+}
+function showNotes(){
+  const n=(S.notes||[]).slice();
+  n.push('accel samples: '+(S.nAcc||0)+'  ·  gyro samples: '+(S.nGyro||0)+'  ·  GNSS fixes: '+(S.nFix||0));
+  if(S.gnssErr) n.push('GNSS error: '+S.gnssErr);
+  if((S.nAcc||0)===0) n.push('<b>No motion data.</b> If "in iframe: YES" above, open this page in its own tab or host it yourself.');
+  log(n.join('<br>'));
+}
+function stopSensors(){
+  S.sensors.forEach(s=>{try{s.stop()}catch(e){}}); S.sensors=[];
+  if(S.watchId!==null){navigator.geolocation.clearWatch(S.watchId); S.watchId=null;}
+}
+
+/* ---------- accelerometer ---------- */
+function onAccel(t,a){
+  if(!S.running) return;
+  S.nAcc=(S.nAcc||0)+1; if(S.nAcc===1) showNotes();
+  // gravity: slow low-pass. The direction of this vector IS "up" in device axes.
+  const k=0.02;
+  for(let i=0;i<3;i++) S.grav[i]+=k*(a[i]-S.grav[i]);
+  S.up=norm(S.grav);
+  // linear (gravity-removed) acceleration
+  const lin=[a[0]-S.grav[0],a[1]-S.grav[1],a[2]-S.grav[2]];
+  // horizontal vibration energy, low-passed — this is the speed cue
+  const gcomp=dot(lin,S.up);
+  const h=[lin[0]-gcomp*S.up[0], lin[1]-gcomp*S.up[1], lin[2]-gcomp*S.up[2]];
+  const mag=Math.hypot(h[0],h[1],h[2]);
+  S.vibLP += 0.05*(mag-S.vibLP);
+  S.vib = S.vibLP;
+  S.stationary = S.vib < 0.25;
+  S.lastAccel=lin;
+}
+
+/* ---------- gyroscope ---------- */
+function onGyro(t,w){
+  if(!S.running) return;
+  S.nGyro=(S.nGyro||0)+1;
+  if(S.lastT===null){S.lastT=t;return;}
+  let dt=t-S.lastT; S.lastT=t;
+  if(dt<=0||dt>0.5) return;
+  // yaw rate = the component of angular velocity about the true vertical
+  const wz = dot(w,S.up);
+  if(S.stationary && !S.cut){                    // bias learned only while stopped
+    S.yawBias += (wz-S.yawBias)/Math.min(++S.yawBiasN,400);
+  }
+  const rate = wz - S.yawBias;
+  if(S.psiInit) S.psi += rate*dt;
+
+  // dead reckoning step
+  if(S.psiInit){
+    const v = S.stationary ? 0 : S.v;
+    const d = v*dt;
+    S.px += d*Math.sin(S.psi);     // psi measured from north, clockwise
+    S.py += d*Math.cos(S.psi);
+    if(S.cut) S.dist += d;
+    if(d>0.2||S.pred.length===0) S.pred.push([S.px,S.py]);
+  }
+  // speed: while GNSS is healthy the fit is updated; while cut it is frozen
+  if(S.cut && S.calN>8){
+    const est = S.calA*S.vib + S.calB;
+    S.v = S.stationary?0:Math.max(0,Math.min(45,est));
+  }
+  draw();
+}
+
+/* ---------- GNSS ---------- */
+function onFix(p){
+  if(!S.running) return;
+  const c=p.coords;
+  S.nFix=(S.nFix||0)+1; S.gnssErr=null;
+  if(S.lat0===null){ S.lat0=c.latitude; S.lon0=c.longitude; }
+  const [x,y]=toXY(c.latitude,c.longitude);
+  S.truth.push([x,y]);
+  S.lastFix=[x,y]; S.lastFixT=performance.now()/1000;
+
+  if(!S.cut){
+    // GNSS healthy: it defines position, heading and the speed calibration
+    S.px=x; S.py=y;
+    if(c.speed!==null && c.speed>1.5){
+      if(c.heading!==null){ S.psi=c.heading*Math.PI/180; S.psiInit=true; }
+      // online calibration: vibration -> speed, least squares, this vehicle only
+      S.calX.push(S.vib); S.calY.push(c.speed);
+      if(S.calX.length>400){S.calX.shift();S.calY.shift();}
+      if(S.calX.length>8){
+        const n=S.calX.length;
+        const mx=S.calX.reduce((a,b)=>a+b)/n, my=S.calY.reduce((a,b)=>a+b)/n;
+        let num=0,den=0;
+        for(let i=0;i<n;i++){num+=(S.calX[i]-mx)*(S.calY[i]-my); den+=(S.calX[i]-mx)**2;}
+        if(den>1e-6){ S.calA=num/den; S.calB=my-S.calA*mx; S.calN=n; }
+      }
+      S.v=c.speed;
+    }
+    S.pred=[[x,y]];
+  } else {
+    // cut: GNSS is still recorded as truth for scoring, never fed to the engine
+    S.err=Math.hypot(S.px-x,S.py-y);
+  }
+  draw();
+}
+
+/* ---------- drawing ---------- */
+function draw(){
+  const all=S.truth.concat(S.pred);
+  if(all.length<2) return;
+  $('hint').style.display='none'; $('legend').style.display='block';
+  const xs=all.map(p=>p[0]), ys=all.map(p=>p[1]);
+  const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+  const W=400,H=520,PAD=40;
+  const sc=Math.min((W-2*PAD)/Math.max(maxX-minX,20),(H-2*PAD)/Math.max(maxY-minY,20));
+  const cx=(minX+maxX)/2, cy=(minY+maxY)/2;
+  const pr=p=>[W/2+(p[0]-cx)*sc, H/2-(p[1]-cy)*sc];
+  const d=pts=>pts.length?'M'+pts.map(p=>{const q=pr(p);return q[0].toFixed(1)+','+q[1].toFixed(1)}).join('L'):'';
+  $('trTruth').setAttribute('d',d(S.truth));
+  $('trPred').setAttribute('d',S.cut?d(S.pred):'');
+  const cur=pr([S.px,S.py]);
+  $('car').setAttribute('transform','translate('+cur.join(',')+')');
+  $('car').querySelector('circle').setAttribute('fill',S.cut?'#FF5C5C':'#19C2CE');
+  if(S.cut&&S.lastFix){
+    const tp=pr(S.lastFix);
+    $('gap').setAttribute('x1',tp[0]);$('gap').setAttribute('y1',tp[1]);
+    $('gap').setAttribute('x2',cur[0]);$('gap').setAttribute('y2',cur[1]);
+    $('gap').setAttribute('opacity',.9);
+  } else $('gap').setAttribute('opacity',0);
+
+  $('mSpd').textContent=(S.v*3.6).toFixed(0);
+  $('mDist').textContent=S.dist.toFixed(0);
+  $('mErr').textContent=S.cut?S.err.toFixed(1):'—';
+  $('mErr').style.color = !S.cut?'':(S.dist>20&&100*S.err/S.dist<10?'var(--green)':'var(--amber)');
+  if(S.cut){
+    const age=(performance.now()/1000-S.tCut);
+    $('age').textContent=age.toFixed(0)+'s';
+  }
+  log('<b>'+(S.api||'—')+'</b><br>'+
+      'up [' + S.up.map(x=>x.toFixed(2)).join(' ') + ']  ·  heading ' + ((S.psi*180/Math.PI+360)%360).toFixed(0) + '°<br>'+
+      'yaw bias ' + (S.yawBias*180/Math.PI).toFixed(3) + ' °/s  ·  vibration ' + S.vib.toFixed(3) + ' m/s²<br>'+
+      'speed fit: v ≈ ' + S.calA.toFixed(2) + '·vib ' + (S.calB>=0?'+':'') + S.calB.toFixed(2) +
+      '  (' + S.calN + ' samples)' + (S.stationary?'  ·  <b>stationary</b>':''));
+}
+
+/* ---------- controls ---------- */
+$('bStart').onclick=()=>{
+  if(S.running) return;
+  S.running=true; S.lastT=null; S.t0=performance.now()/1000;
+  startSensors();
+  $('status').className='status'; $('stText').textContent='GNSS LOCKED — calibrating';
+  $('bCut').disabled=false; $('bStart').disabled=true;
+};
+$('bCut').onclick=()=>{
+  if(!S.running) return;
+  if(!S.cut){
+    if(S.calN<8){ log('<b>Not calibrated yet.</b> Keep moving with GNSS for ~20 s so the speed fit can form.'); return; }
+    S.cut=true; S.tCut=performance.now()/1000; S.dist=0; S.pred=[[S.px,S.py]];
+    $('status').className='status lost'; $('stText').textContent='GNSS CUT — inertial only';
+    $('bCut').textContent='Restore GNSS';
+  } else {
+    S.cut=false; $('status').className='status'; $('stText').textContent='GNSS LOCKED';
+    $('bCut').textContent='Cut GNSS'; $('age').textContent='';
+  }
+};
+$('bReset').onclick=()=>{
+  stopSensors();
+  Object.assign(S,{running:false,cut:false,truth:[],pred:[],dist:0,err:0,v:0,
+    calX:[],calY:[],calA:0,calB:0,calN:0,yawBias:0,yawBiasN:0,psiInit:false,lat0:null,lastT:null});
+  $('status').className='status idle'; $('stText').textContent='Not started'; $('age').textContent='';
+  $('bStart').disabled=false; $('bCut').disabled=true; $('bCut').textContent='Cut GNSS';
+  $('trTruth').setAttribute('d','');$('trPred').setAttribute('d','');$('gap').setAttribute('opacity',0);
+  $('hint').style.display='flex'; $('legend').style.display='none';
+  $('mSpd').textContent='—';$('mDist').textContent='0';$('mErr').textContent='—';
+  log('Engine idle.');
+};
+$('tabLive').onclick=()=>{$('tabLive').classList.add('on');$('tabReplay').classList.remove('on');};
+$('tabReplay').onclick=()=>{
+  $('tabReplay').classList.add('on');$('tabLive').classList.remove('on');
+  log('<b>Replay mode</b><br>Recorded IO-VNBD drives are evaluated offline in the engine harness — see the position plot in the submission. Live mode is the on-device demonstration.');
+};
+</script>
+</body>
+</html>
